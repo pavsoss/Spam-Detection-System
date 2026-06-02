@@ -255,6 +255,7 @@ export default function App() {
 *  Multilingual Support
 *  More accuracy and advanced model 
 * Include Email predicton perfectly and add mobile numbers also to track
+* Include Url prediction perfectly to check url is safe or not
 
 ---
 
