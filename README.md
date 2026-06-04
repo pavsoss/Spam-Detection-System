@@ -223,6 +223,36 @@ export default function App() {
   );
 }
 ```
+---
+
+## 🗄️ Email Classification Database
+
+A MySQL-based system to store and manage classified email records.
+
+### Database Setup
+
+```bash
+mysql -u root -p < backend/schema.sql
+```
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/emails/` | Insert new email record |
+| PATCH | `/api/emails/{id}/mark` | Mark as spam or legitimate |
+| GET | `/api/emails/spam` | Retrieve all spam emails |
+| GET | `/api/emails/legitimate` | Retrieve all legitimate emails |
+| GET | `/api/emails/count/spam` | Count total spam emails |
+| GET | `/api/emails/count/legitimate` | Count total legitimate emails |
+
+### Email Record Fields
+
+- `email_id` — Auto-generated unique ID
+- `subject` — Email subject
+- `sender` — Sender email address
+- `is_spam` — Boolean spam status
+- `timestamp` — Record creation time
 
 ---
 
