@@ -1,3 +1,6 @@
+import time
+import logging
+from flask import request, g
 from flask import Flask,request,jsonify
 import os
 import joblib
@@ -11,6 +14,29 @@ from flask_limiter.util import get_remote_address
 load_dotenv()
 
 app=Flask(__name__)
+
+# ─── LOGGING CONFIGURATION ──────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('api.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ─── REQUEST LOGGING MIDDLEWARE ────────────────────────────────
+@app.before_request
+def start_timer():
+    g.start = time.time()
+    g.client_ip = request.remote_addr
+
+@app.after_request
+def log_request(response):
+    duration = time.time() - g.start
+    logger.info(f"{request.method} {request.path} → {response.status_code} ({duration:.3f}s) from {g.client_ip}")
+    return response
 
 # ─── RATE LIMITER ────────────────────────────────────────────────
 limiter = Limiter(
