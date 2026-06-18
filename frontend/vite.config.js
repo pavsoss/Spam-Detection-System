@@ -10,6 +10,7 @@ export default defineConfig({
       '/api': 'http://localhost:3000',
       '/predict': 'http://localhost:3000',
       '/feedback': 'http://localhost:3000',
+      '/analyze-email-header': 'http://localhost:3000',
     },
   },
 })

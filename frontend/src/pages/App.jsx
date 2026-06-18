@@ -8,6 +8,7 @@ import WordCloud from '../components/WordCloud';
 import FeedbackWidget from "../components/FeedbackWidget";
 import Login from "./Login.jsx";
 import Register from "./Register.jsx";
+import EmailHeaderAnalyzer from "../components/EmailHeaderAnalyzer";
 
 function SpamDetector() {
   const [text, setText] = useState("");
@@ -16,6 +17,7 @@ function SpamDetector() {
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
   const [showSettings, setShowSettings] = useState(false);
+  const [activeTab, setActiveTab] = useState("detector"); // "detector" or "authenticity"
   const { user, logout } = useAuth();
 
   const {
@@ -188,101 +190,131 @@ function SpamDetector() {
             Analyze messages, emails & URLs instantly
           </p>
 
-          <div className="mb-4">
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className={`w-full p-3.5 rounded-xl border font-semibold focus:outline-none focus:ring-2 transition-all ${
-                isDark ? activeTheme.inputDark : activeTheme.input
+          {/* Navigation Tabs */}
+          <div className="flex justify-center gap-2 mb-6 border-b border-slate-500/20 pb-3 text-sm font-bold">
+            <button
+              onClick={() => setActiveTab("detector")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "detector"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
               }`}
             >
-              <option value="message">Message</option>
-              <option value="email">Email</option>
-              <option value="url">URL</option>
-            </select>
+              Spam Detector
+            </button>
+            <button
+              onClick={() => setActiveTab("authenticity")}
+              className={`pb-1 px-4 transition-all border-b-2 ${
+                activeTab === "authenticity"
+                  ? "border-current opacity-100"
+                  : "border-transparent opacity-50 hover:opacity-75"
+              }`}
+            >
+              Sender Verifier
+            </button>
           </div>
 
-          <textarea
-            className={`w-full border p-3.5 rounded-xl focus:outline-none focus:ring-2 resize-none text-sm sm:text-base transition-all ${
-              isDark ? activeTheme.inputDark : activeTheme.input
-            }`}
-            rows="4"
-            placeholder={
-              type === "url"
-                ? "Enter URL to check..."
-                : type === "message"
-                ? "Type your message..."
-                : "Paste your email content..."
-            }
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-
-          <button
-            onClick={handlePredict}
-            className={`mt-5 w-full py-3.5 rounded-xl font-bold text-white shadow-md active:scale-95 transition-all ${activeTheme.accent}`}
-          >
-            {loading ? "Analyzing..." : `Analyze ${type === "url" ? "URL" : type}`}
-          </button>
-
-          {result && (
-            <div className="mt-4 border border-slate-350/20 rounded-2xl p-2 bg-slate-500/5">
-              <div className={`p-4 rounded-xl font-bold transition-all duration-300 ${getBg()} ${getColor()}`}>
-                {result === "ham" && "✅ Safe Message"}
-                {result === "spam" && "🚫 Spam Detected"}
-                {result === "smishing" && "⚠️ Fraud Alert"}
-                {result === "safe" && "✅ Safe URL"}
-                {result === "malicious" && "🚨 Malicious URL"}
-                {result === "Error" && "⚠️ Something went wrong"}
-              </div>
-            </div>
-          )}
-          <WordCloud darkMode={darkMode} />
-
-          {result && confidence !== null && result !== "Error" && (
-            <div className="mt-4 text-left">
-              <p className="text-xs font-semibold mb-1 opacity-70">
-                Model Confidence: {confidencePct}%
-              </p>
-              <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-800" : "bg-slate-200"}`}>
-                <div
-                  className={`h-2 rounded-full transition-all duration-500 ${
-                    result === "ham" || result === "safe"
-                      ? "bg-green-500"
-                      : result === "spam" || result === "malicious"
-                      ? "bg-red-500"
-                      : "bg-orange-500"
+          {activeTab === "detector" ? (
+            <>
+              <div className="mb-4">
+                <select
+                  value={type}
+                  onChange={(e) => setType(e.target.value)}
+                  className={`w-full p-3.5 rounded-xl border font-semibold focus:outline-none focus:ring-2 transition-all ${
+                    isDark ? activeTheme.inputDark : activeTheme.input
                   }`}
-                  style={{ width: `${confidencePct}%` }}
-                />
+                >
+                  <option value="message">Message</option>
+                  <option value="email">Email</option>
+                  <option value="url">URL</option>
+                </select>
               </div>
-            </div>
+
+              <textarea
+                className={`w-full border p-3.5 rounded-xl focus:outline-none focus:ring-2 resize-none text-sm sm:text-base transition-all ${
+                  isDark ? activeTheme.inputDark : activeTheme.input
+                }`}
+                rows="4"
+                placeholder={
+                  type === "url"
+                    ? "Enter URL to check..."
+                    : type === "message"
+                    ? "Type your message..."
+                    : "Paste your email content..."
+                }
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+
+              <button
+                onClick={handlePredict}
+                className={`mt-5 w-full py-3.5 rounded-xl font-bold text-white shadow-md active:scale-95 transition-all ${activeTheme.accent}`}
+              >
+                {loading ? "Analyzing..." : `Analyze ${type === "url" ? "URL" : type}`}
+              </button>
+
+              {result && (
+                <div className="mt-4 border border-slate-350/20 rounded-2xl p-2 bg-slate-500/5">
+                  <div className={`p-4 rounded-xl font-bold transition-all duration-300 ${getBg()} ${getColor()}`}>
+                    {result === "ham" && "✅ Safe Message"}
+                    {result === "spam" && "🚫 Spam Detected"}
+                    {result === "smishing" && "⚠️ Fraud Alert"}
+                    {result === "safe" && "✅ Safe URL"}
+                    {result === "malicious" && "🚨 Malicious URL"}
+                    {result === "Error" && "⚠️ Something went wrong"}
+                  </div>
+                </div>
+              )}
+              <WordCloud darkMode={darkMode} />
+
+              {result && confidence !== null && result !== "Error" && (
+                <div className="mt-4 text-left">
+                  <p className="text-xs font-semibold mb-1 opacity-70">
+                    Model Confidence: {confidencePct}%
+                  </p>
+                  <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-800" : "bg-slate-200"}`}>
+                    <div
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        result === "ham" || result === "safe"
+                          ? "bg-green-500"
+                          : result === "spam" || result === "malicious"
+                          ? "bg-red-500"
+                          : "bg-orange-500"
+                      }`}
+                      style={{ width: `${confidencePct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {result && result !== "Error" && type !== "url" && (
+                <FeedbackWidget
+                  key={`${text}|${result}|${confidence}`}
+                  text={text}
+                  predictedLabel={result}
+                  darkMode={isDark}
+                />
+              )}
+
+              <button
+                onClick={() => {
+                  setText("");
+                  setResult("");
+                  setConfidence(null);
+                  setType("message");
+                }}
+                className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
+                  isDark ? activeTheme.btnSecondaryDark : activeTheme.btnSecondary
+                }`}
+              >
+                Reset
+              </button>
+
+              <FeatureImportance darkMode={isDark} />
+            </>
+          ) : (
+            <EmailHeaderAnalyzer />
           )}
-
-          {result && result !== "Error" && type !== "url" && (
-            <FeedbackWidget
-              key={`${text}|${result}|${confidence}`}
-              text={text}
-              predictedLabel={result}
-              darkMode={isDark}
-            />
-          )}
-
-          <button
-            onClick={() => {
-              setText("");
-              setResult("");
-              setConfidence(null);
-              setType("message");
-            }}
-            className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${
-              isDark ? activeTheme.btnSecondaryDark : activeTheme.btnSecondary
-            }`}
-          >
-            Reset
-          </button>
-
-          <FeatureImportance darkMode={isDark} />
         </div>
       </div>
     </div>

@@ -62,7 +62,7 @@ app.post("/predict", protect, async (req, res) => {
       });
     }
 
-    const response = await axios.post(process.env.API, {
+    const response = await axios.post(process.env.API || "http://localhost:5000/predict", {
       text: text.trim(),
       type: type.toLowerCase(),
     });
@@ -75,7 +75,7 @@ app.post("/predict", protect, async (req, res) => {
 });
 
 // Protected: record user feedback on a prediction (forwarded to the ML API)
-const ML_API_BASE = process.env.API.replace(/\/predict$/, "");
+const ML_API_BASE = (process.env.API || "http://localhost:5000/predict").replace(/\/predict$/, "");
 
 app.post("/feedback", protect, async (req, res) => {
   try {
@@ -102,6 +102,44 @@ app.post("/feedback", protect, async (req, res) => {
     res.status(500).json({ error: "Something went wrong" });
   }
 });
+
+// Protected: analyze email headers for authenticity (forwarded to ML API)
+app.post("/analyze-email-header", protect, async (req, res) => {
+  try {
+    const { headers } = req.body;
+
+    if (!headers) {
+      return res.status(400).json({ error: "Email headers are required" });
+    }
+
+    if (typeof headers !== "string") {
+      return res.status(400).json({ error: "Email headers must be a string." });
+    }
+
+    if (headers.trim().length === 0) {
+      return res.status(400).json({ error: "Email headers must not be empty." });
+    }
+
+    const response = await axios.post(`${ML_API_BASE}/analyze-email-header`, {
+      headers: headers,
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+      console.error("Flask ML API is unavailable:", error.message);
+      return res.status(503).json({
+        error: "Flask ML API is currently unavailable. Please try again later.",
+      });
+    }
+    if (error.response) {
+      return res.status(error.response.status).json(error.response.data);
+    }
+    console.error(error.message);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -6,6 +6,7 @@ import re
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from domain_checker import analyze_text
+from email_header_analyzer import analyze_headers
 from pathlib import Path
 from flask_cors import CORS
 load_dotenv()
@@ -13,9 +14,9 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
-MODEL_PATH = os.getenv("MODEL_PATH")
-VECTORIZER_PATH = os.getenv("VECTORIZER_PATH")
-LABEL_ENCODER_PATH = os.getenv("LABEL_ENCODER_PATH")
+MODEL_PATH = os.getenv("MODEL_PATH", "linear_svm_model.pkl")
+VECTORIZER_PATH = os.getenv("VECTORIZER_PATH", "tfidf_vectorizer.pkl")
+LABEL_ENCODER_PATH = os.getenv("LABEL_ENCODER_PATH", "label_encoder.pkl")
 
 if not MODEL_PATH or not VECTORIZER_PATH or not LABEL_ENCODER_PATH:
     raise ValueError("Required environment variables are missing")
@@ -141,6 +142,23 @@ def feedback():
         writer.writerow([text, predicted_label, correct_label, datetime.now(timezone.utc).isoformat()])
 
     return jsonify({"message": "Feedback recorded. Thank you!"}), 201
+
+
+@app.route("/analyze-email-header", methods=["POST"])
+def analyze_email_header():
+    try:
+        data = request.get_json(silent=True) or {}
+        headers = data.get("headers", "")
+        if not headers:
+            return jsonify({"error": "No email headers provided"}), 400
+            
+        analysis = analyze_headers(headers)
+        return jsonify({
+            "status": analysis.get("risk_level", "Suspicious"),
+            "analysis": analysis
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
