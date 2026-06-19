@@ -31,7 +31,7 @@ from email_scanner import scan_emails_with_model
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
+CORS(app, resources={r"/*": {"origins": "*" }})
 
 MODEL_PATH = os.getenv("MODEL_PATH", "linear_svm_model.pkl")
 VECTORIZER_PATH = os.getenv("VECTORIZER_PATH", "tfidf_vectorizer.pkl")
