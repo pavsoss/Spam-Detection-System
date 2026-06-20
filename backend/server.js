@@ -358,6 +358,46 @@ app.get("/spam-insights", protect, async (req, res) => {
   }
 });
 
+// Public: word frequency data for the spam word-cloud widget (forwarded to ML API)
+app.get("/api/wordcloud", async (req, res) => {
+  try {
+    const response = await axios.get(`${ML_API_BASE}/api/wordcloud`);
+    res.json(response.data);
+  } catch (error) {
+    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+      console.error("Flask ML API is unavailable:", error.message);
+      return res.status(503).json({
+        error: "Flask ML API is currently unavailable. Please try again later.",
+      });
+    }
+    if (error.response) {
+      return res.status(error.response.status).json(error.response.data);
+    }
+    console.error(error.message);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+// Public: global feature importance for the "Top Spam Indicators" widget (forwarded to ML API)
+app.get("/importance", async (req, res) => {
+  try {
+    const response = await axios.get(`${ML_API_BASE}/importance`);
+    res.json(response.data);
+  } catch (error) {
+    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+      console.error("Flask ML API is unavailable:", error.message);
+      return res.status(503).json({
+        error: "Flask ML API is currently unavailable. Please try again later.",
+      });
+    }
+    if (error.response) {
+      return res.status(error.response.status).json(error.response.data);
+    }
+    console.error(error.message);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
 // Protected: Get Gmail auth URL
 app.get("/gmail/auth-url", protect, async (req, res) => {
   try {

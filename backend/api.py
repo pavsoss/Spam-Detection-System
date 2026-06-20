@@ -48,6 +48,9 @@ model = joblib.load(MODEL_PATH)
 vectorizer = joblib.load(VECTORIZER_PATH)
 label_encoder = joblib.load(LABEL_ENCODER_PATH)
 
+from xai_service import XAIService
+xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label_encoder)
+
 # In-memory storage for spam words (for demo purposes)
 # In production, use a database
 spam_words_storage = {}
@@ -278,6 +281,25 @@ def get_wordcloud():
             "success": False,
             "error": str(e)
         }), 500
+
+
+@app.route("/importance", methods=["GET"])
+def get_feature_importance():
+    """
+    Get global feature importance (top words driving spam/smishing
+    classifications), computed via SHAP over the trained model.
+    """
+    try:
+        top_features = [
+            {"feature": word, "importance": score}
+            for word, score in xai_service.get_global_importance()
+        ]
+        return jsonify({"top_features": top_features})
+    except Exception as e:
+        app.logger.error(f"Failed to compute feature importance: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/feedback", methods=["POST"])
 def feedback():
     data = request.get_json(silent=True) or {}
