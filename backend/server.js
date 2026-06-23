@@ -46,7 +46,7 @@ app.use((req, res, next) => {
 
   //Log when response is finished
   res.on('finish', () => {
-        const duration = Date.now() - start;
+        const duration = Date.now() - startTime;
         console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
     });
     
@@ -678,6 +678,31 @@ app.post("/scan-emails", protect, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
+// ===== GRACEFUL SHUTDOWN =====
+const gracefulShutdown = async signal => {
+  console.log(`\nReceived ${signal}. Closing server...`);
+
+  //Stop accepting new requests
+  server.close(async () => {
+    console.log('HTTP server closed.');
+  });
+
+  //Close DB connection
+  try {
+    await mongoose.disconnect();
+    console.log('MongoDB connection closed.');
+  } catch (err) {
+    console.error('Error closing MongoDB connection:', err);
+  }
+
+  console.log('Shutdown complete. Exiting process.');
+  process.exit(0);
+}
+
+// Listen for termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
