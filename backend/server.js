@@ -8,6 +8,7 @@ const express = require("express");
 const seedAdminUser = require("./seeders/adminSeeder");
 const { getHealthStatus } = require('./utils/healthCheck');
 const cors = require("cors");
+const { v4: uuidv4 } = require('uuid');
 const axios = require("axios");
 
 // Configure global request interceptor to append the internal secret API key
@@ -49,6 +50,30 @@ app.get('/health', (req, res) => {
         message: 'Server is running',
         limit: '1MB'
     });
+});
+
+// ===== REQUEST ID MIDDLEWARE =====
+app.use((req, res, next) => {
+  // Generate a unique request ID
+  const requestId = uuidv4().substring(0, 8); // Shorten the UUID for easier logging
+  req.requestId = requestId;
+
+  //Add to response headers
+  res.setHeader('X-Request-ID', requestId);
+
+  // Log the request with the request ID
+  console.log(`[${requestId}] ${req.method} ${req.originalUrl}`);
+
+  //Track time
+  const startTime = Date.now();
+
+  //Log when response is finished
+  res.on('finish', () => {
+        const duration = Date.now() - start;
+        console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
+    });
+    
+    next();
 });
 
 // Auth routes , History routes
@@ -158,7 +183,7 @@ app.post("/predict", protect, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    console.error(error.message);
+    console.error(`[${req.requestId}]`,error.message);
     res.status(500).json({ error: "Something went wrong" });
   }
 });
