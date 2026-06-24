@@ -158,15 +158,15 @@ def save_scan_results(username, scanned_emails):
         conn.commit()
 
 
-def get_scan_history(username, limit=100):
+def get_scan_history(username, limit=100, offset=0):
     with _connection() as conn:
         rows = conn.execute(
             """
             SELECT * FROM imap_scan_results
             WHERE username = ?
             ORDER BY scanned_at DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (username, limit),
+            (username, limit, offset),
         ).fetchall()
         return [dict(row) for row in rows]

@@ -748,8 +748,10 @@ def imap_scan_results():
     if not username:
         return jsonify({"error": "Missing X-User-Username header"}), 401
     limit = request.args.get("limit", default=100, type=int)
-    history = imap_store.get_scan_history(username, limit=limit)
-    return jsonify({"results": history})
+    page = request.args.get("page", default=1, type=int)
+    offset = max(0, (page - 1) * limit)
+    history = imap_store.get_scan_history(username, limit=limit, offset=offset)
+    return jsonify({"results": history, "page": page, "limit": limit})
 
 
 if __name__ == "__main__":
