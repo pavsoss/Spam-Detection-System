@@ -1,6 +1,6 @@
 const rateLimit = require("express-rate-limit");
 
-export  const loginLimiter = rateLimit({
+const loginLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 5,
   message: {
@@ -9,7 +9,7 @@ export  const loginLimiter = rateLimit({
   }
 });
 
-export  const registerLimiter = rateLimit({
+const registerLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 10,
   message: {
@@ -17,3 +17,5 @@ export  const registerLimiter = rateLimit({
     message: "Too many registration attempts. Please try again later."
   }
 });
+
+module.exports = { loginLimiter, registerLimiter };

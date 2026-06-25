@@ -15,6 +15,16 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
+// Register the service worker so the app is installable (PWA) and works offline.
+// Only in production builds — the dev server should not be intercepted by a SW.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>

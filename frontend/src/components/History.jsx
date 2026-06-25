@@ -50,6 +50,20 @@ const History = () => {
         );
     };
 
+    const handleClearAll = async () => {
+        if (!confirm('Are you sure you want to permanently delete ALL history?')) return;
+        try {
+            const token = localStorage.getItem('token');
+            await axios.delete('/api/history', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setSelectedItems([]);
+            fetchHistory();
+        } catch (error) {
+            alert('Failed to clear history');
+        }
+    };
+
     const handleExportCSV = () => {
         if (history.length === 0) return;
         
@@ -93,19 +107,34 @@ const History = () => {
                     </select>
                     <button 
                         onClick={handleExportCSV}
-                    disabled={history.length === 0}
-                    style={{
-                        background: history.length === 0 ? '#9ca3af' : '#3b82f6',
-                        color: 'white',
-                        padding: '8px 16px',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: history.length === 0 ? 'not-allowed' : 'pointer',
-                        fontWeight: '600'
-                    }}
-                >
-                    Download CSV
-                </button>
+                        disabled={history.length === 0}
+                        style={{
+                            background: history.length === 0 ? '#9ca3af' : '#3b82f6',
+                            color: 'white',
+                            padding: '8px 16px',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: history.length === 0 ? 'not-allowed' : 'pointer',
+                            fontWeight: '600'
+                        }}
+                    >
+                        Download CSV
+                    </button>
+                    <button 
+                        onClick={handleClearAll}
+                        disabled={history.length === 0}
+                        style={{
+                            background: history.length === 0 ? '#fca5a5' : '#ef4444',
+                            color: 'white',
+                            padding: '8px 16px',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: history.length === 0 ? 'not-allowed' : 'pointer',
+                            fontWeight: '600'
+                        }}
+                    >
+                        Clear All
+                    </button>
                 </div>
             </div>
 
@@ -146,6 +175,31 @@ const History = () => {
                             onChange={() => toggleSelect(item._id)}
                         />
                         <span style={{ flex: 1 }}>{item.query}</span>
+                        {item.confidence != null && (
+                            <div style={{ display: 'flex', alignItems: 'center', width: '120px', marginRight: '10px' }}>
+                                <div style={{ 
+                                    flex: 1, 
+                                    height: '6px', 
+                                    background: '#e5e7eb', 
+                                    borderRadius: '3px',
+                                    overflow: 'hidden',
+                                    marginRight: '8px'
+                                }}>
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${Math.min(item.confidence * 50 + 50, 100)}%`,
+                                        background: item.prediction === 'spam' || item.prediction === 'malicious' 
+                                            ? '#ef4444' 
+                                            : item.prediction === 'smishing' 
+                                                ? '#f97316' 
+                                                : '#22c55e'
+                                    }} />
+                                </div>
+                                <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '500', width: '30px', textAlign: 'right' }}>
+                                    {Math.min(item.confidence * 50 + 50, 100).toFixed(0)}%
+                                </span>
+                            </div>
+                        )}
                         <span
                             style={{
                                 padding: '2px 10px',

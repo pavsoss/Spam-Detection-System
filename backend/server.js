@@ -8,6 +8,7 @@ const express = require("express");
 const seedAdminUser = require("./seeders/adminSeeder");
 const { getHealthStatus } = require('./utils/healthCheck');
 const cors = require("cors");
+const config = require('./config');
 const compression = require('compression');
 const { v4: uuidv4 } = require('uuid');
 const helmet = require('helmet');
@@ -34,6 +35,23 @@ const FormData = require("form-data");
 
 const app = express();
 
+const Sentry = require("@sentry/node");
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || "development",
+  tracesSampleRate: 1.0,
+  integrations: [
+    new Sentry.Integrations.Http({ tracing: true }),
+  ],
+});
+
+// Request handler - adds tracing context
+app.use(Sentry.Handlers.requestHandler());
+
+//Tracing handler - creates a trace for every incoming request
+app.use(Sentry.Handlers.tracingHandler());
+
 // Connect to MongoDB WITH RETRY
 const connectWithRetry = async (retries=5, delay=5000) => {
   console.log("Attempting to connect to MongoDB...");
@@ -41,7 +59,7 @@ const connectWithRetry = async (retries=5, delay=5000) => {
 
   for(let attempt = 1; attempt <= retries; attempt++) {
     try {
-      await mongoose.connect(process.env.MONGODB_URI);
+      await mongoose.connect(config.mongodbUri);
             console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
             seedAdminUser();
             return true;
@@ -121,12 +139,17 @@ if(process.env.NODE_ENV === 'development'){
 // Start connection with retry
 connectWithRetry();
 
-app.use(cors());
+const corsOptions = {
+  origin: config.corsOrigins,
+  credentials: true,
+};
+app.use(cors(corsOptions));
 app.use(helmet());
 app.use(compression());
 app.use(express.json());
 app.use(express.json({limit: '1mb'}));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use('/uploads', express.static('uploads'));
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
@@ -296,10 +319,23 @@ app.post("/feedback", protect, async (req, res) => {
 
     res.status(response.status).json(response.data);
   } catch (error) {
+    // Capture error in Sentry with context
+    Sentry.captureException(error, {
+      tags: {
+        endpoint: '/feedback',
+        userId: req.user?.id || 'anonymous'
+      },
+      extra: {
+        text: text?.substring(0, 100), // Truncate for privacy
+        predicted_label,
+        correct_label
+      }
+    });
+
     if (error.response) {
       return res.status(error.response.status).json(error.response.data);
     }
-    console.error(error.message);
+    console.error(`[${req.requestId}] Feedback error:`, error.message);
     res.status(500).json({ error: "Something went wrong" });
   }
 });
@@ -783,6 +819,7 @@ app.post("/scan-emails", protect, async (req, res) => {
   }
 });
 
+const PORT = config.port;
 app.use((err, req, res, next) => {
   if(err.type==='entity.too.large' || err.message==='request entity too large') {
     return res.status(413).json({
