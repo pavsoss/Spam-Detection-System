@@ -29,7 +29,7 @@ const loginValidation = [
 
 router.post('/', loginValidation,loginLimiter, login);
 router.post('/register', registerValidation,registerLimiter, register);
-router.post('/google', googleLogin);
+router.post('/google', loginLimiter, googleLogin);
 router.get('/me', protect, getMe);
 router.post('/avatar', protect, upload.single('avatar'), updateAvatar);
 
