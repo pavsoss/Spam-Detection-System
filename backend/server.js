@@ -920,15 +920,49 @@ app.use((err, req, res, next) => {
 
 app.use(errorHandler);
 
-// ========================================
-// START SERVER
-// ========================================
-
-const PORT = config.port;
-const server = app.listen(PORT, () => {
-  const totalTime = Date.now() - SERVER_START_TIME;
-  displayBanner();
-  console.log(`⏱️ Total startup time: ${totalTime}ms`);
+// ====== PREDICTION STATISTICS ======
+app.get('/api/stats', protect, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const total = await History.countDocuments({ user: userId });
+        const spam = await History.countDocuments({ user: userId, prediction: 'spam' });
+        const ham = await History.countDocuments({ user: userId, prediction: 'ham' });
+        
+        const daily = await History.aggregate([
+            { $match: { user: userId } },
+            { $group: { 
+                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, 
+                count: { $sum: 1 } 
+            }},
+            { $sort: { _id: -1 } },
+            { $limit: 7 }
+        ]);
+        
+        // Get accuracy if feedback exists
+        const feedbackCount = await History.countDocuments({ 
+            user: userId, 
+            feedback: { $exists: true } 
+        });
+        
+        res.json({
+            success: true,
+            data: {
+                total,
+                spam,
+                ham,
+                spamRatio: total > 0 ? (spam / total) * 100 : 0,
+                daily,
+                feedbackCount
+            }
+        });
+    } catch (error) {
+        console.error('Stats error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
 });
 
 // ========================================
@@ -1067,4 +1101,15 @@ app.get("/imap/scan-results", protect, async (req, res) => {
     console.error(error.message);
     res.status(500).json({ error: "Something went wrong" });
   }
+});
+
+// ========================================
+// START SERVER
+// ========================================
+
+const PORT = config.port;
+const server = app.listen(PORT, () => {
+  const totalTime = Date.now() - SERVER_START_TIME;
+  displayBanner();
+  console.log(`⏱️ Total startup time: ${totalTime}ms`);
 });
