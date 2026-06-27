@@ -171,6 +171,20 @@ const updateAvatar = async (req, res) => {
 
     const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/${filename}`;
     
+    // Clean up old avatar if it exists
+    const currentUser = await User.findById(req.user.id);
+    if (currentUser && currentUser.avatarUrl && currentUser.avatarUrl.includes('/uploads/')) {
+      try {
+        const oldFilename = currentUser.avatarUrl.split('/uploads/')[1];
+        const oldFilePath = path.join(__dirname, '..', 'uploads', oldFilename);
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      } catch (err) {
+        console.error('Failed to delete old avatar:', err);
+      }
+    }
+    
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { avatarUrl },
