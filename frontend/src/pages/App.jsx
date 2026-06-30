@@ -438,6 +438,67 @@ function App() {
                       />
                     </>
                   )}
+                  {loading ? "Analyzing..." : `Analyze ${type === "url" ? "URL" : type}`}
+                </button>
+
+                {/* Results Section */}
+                {/* 🚀 Tailwind Skeleton Loader */}
+                {loading ? (
+                  <div className={`mt-5 rounded-3xl p-5 shadow-lg border w-full animate-pulse text-left ${isDark ? "bg-slate-900/50 border-slate-700" : "bg-white/70 border-slate-200"}`}>
+                    {/* Header Placeholder */}
+                    <div className="flex justify-between items-center mb-5">
+                      <div className={`h-6 w-40 rounded-lg ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                      <div className={`h-8 w-24 rounded-full ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                    </div>
+
+                    {/* Confidence Score Placeholder */}
+                    <div className={`h-4 w-32 rounded mb-3 ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                    <div className={`h-8 w-20 rounded mb-4 ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                    <div className={`w-full rounded-full h-3 mb-6 ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+
+                    {/* Explanation Mock Placeholder */}
+                    <div className={`mt-4 p-5 rounded-3xl border ${isDark ? "bg-slate-800/60 border-slate-700" : "bg-slate-50 border-slate-200"}`}>
+                      <div className="flex justify-between mb-4">
+                        <div className={`h-5 w-48 rounded ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                        <div className={`h-8 w-16 rounded ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2 mb-4">
+                        <div className={`h-24 rounded-2xl ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                        <div className={`h-24 rounded-2xl ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                      </div>
+                      <div className={`h-4 w-1/4 rounded mb-3 ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                      <div className={`h-3 w-3/4 rounded mb-2 ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                      <div className={`h-3 w-1/2 rounded ${isDark ? "bg-slate-700" : "bg-slate-200"}`}></div>
+                    </div>
+                  </div>
+                ) : result && (
+               {/* Results Section */}
+                {result && (
+                {/* Error Section */}
+                {result === "Error" && errorInfo && (
+                  <div className={`mt-5 rounded-3xl p-5 shadow-lg border ${isDark ? "bg-yellow-500/10 border-yellow-600/40" : "bg-yellow-50 border-yellow-300"}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl leading-none">⚠️</span>
+                      <div className="flex-1">
+                        <h3 className={`text-base font-bold ${isDark ? "text-yellow-300" : "text-yellow-800"}`}>
+                          {errorInfo.title}
+                        </h3>
+                        <p className={`mt-1 text-sm ${isDark ? "text-yellow-200/80" : "text-yellow-700"}`}>
+                          {errorInfo.message}
+                        </p>
+                        {errorInfo.retryable && (
+                          <button
+                            onClick={handlePredict}
+                            disabled={loading}
+                            className={`mt-3 px-4 py-2 rounded-lg font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed ${isDark ? "bg-yellow-500 text-slate-900 hover:bg-yellow-400" : "bg-yellow-500 text-white hover:bg-yellow-600"}`}
+                          >
+                            {loading ? "Retrying..." : "🔄 Retry"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                   {result && confidence !== null && result !== "Error" && (
                     <div className="mt-4 text-left">
