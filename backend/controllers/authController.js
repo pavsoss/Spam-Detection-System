@@ -6,7 +6,7 @@ const User = require('../models/User');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-
+const BlacklistedToken = require('../models/BlacklistedToken');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const generateToken = (userId) => {
@@ -287,4 +287,26 @@ const resetPassword = async (req, res) => {
   }
 };
 
-module.exports = { register, login, getMe, googleLogin, updateAvatar, forgotPassword, resetPassword };
+const logout = async (req, res) => {
+  try {
+    let token;
+    // Extract token from header
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+      return res.status(400).json({ error: 'No token provided for logout.' });
+    }
+
+    // Add the token to the blacklist
+    await BlacklistedToken.create({ token });
+
+    res.json({ message: 'Successfully logged out. Token revoked.' });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({ error: 'Server error during logout.' });
+  }
+};
+
+module.exports = { register, login, logout, getMe, googleLogin, updateAvatar, forgotPassword, resetPassword };
