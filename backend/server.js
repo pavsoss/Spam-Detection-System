@@ -28,8 +28,9 @@ const logStartupTime= (component, startTime) => {
 axios.interceptors.request.use(
   (config) => {
     config.timeout = 15000; // 15 seconds timeout
-    const internalSecret = process.env.INTERNAL_SECRET || "super-secret-internal-key";
-    config.headers["X-Internal-Secret"] = internalSecret;
+    // No hardcoded fallback: INTERNAL_SECRET is validated as mandatory at
+    // startup (see utils/validateEnv.js), so it is guaranteed present here.
+    config.headers["X-Internal-Secret"] = process.env.INTERNAL_SECRET;
     return config;
   },
   (error) => {

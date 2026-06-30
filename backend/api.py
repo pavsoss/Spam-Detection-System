@@ -49,7 +49,34 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 # (see the axios interceptor in server.js). Enforcing it on every ML API call
 # ensures the model endpoints can't be hit directly by clients that merely have
 # network access to the Flask port.
-INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "super-secret-internal-key")
+#
+# This is mandatory configuration: there is intentionally NO hardcoded fallback,
+# because a default baked into source code is public and would defeat the gate
+# entirely. The service refuses to start unless a sufficiently long secret is
+# supplied via the environment (matching the value the Node service sends).
+INTERNAL_SECRET_MIN_LENGTH = 32
+
+
+def _load_internal_secret():
+    secret = os.getenv("INTERNAL_SECRET")
+    if not secret:
+        raise RuntimeError(
+            "INTERNAL_SECRET is not set. This shared secret authenticates "
+            "requests from the Node/Express backend and is mandatory. Generate "
+            "one with `python -c \"import secrets; print(secrets.token_urlsafe(32))\"` "
+            "and set it (identically) for both the Node and Flask services."
+        )
+    if len(secret) < INTERNAL_SECRET_MIN_LENGTH:
+        raise RuntimeError(
+            f"INTERNAL_SECRET is too short ({len(secret)} characters); it must "
+            f"be at least {INTERNAL_SECRET_MIN_LENGTH} characters. Generate a "
+            "strong value with "
+            "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"`."
+        )
+    return secret
+
+
+INTERNAL_SECRET = _load_internal_secret()
 
 # Paths reachable without the internal secret (liveness/readiness probes).
 PUBLIC_PATHS = {"/", "/health"}
