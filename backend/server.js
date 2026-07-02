@@ -1,3 +1,4 @@
+const { checkCache, setCache } = require('./middleware/cacheMiddleware');
 const { formatError, errorHandler, errorCodes, classifyMlApiError } = require('./utils/errorHelper');
 require("dotenv").config();
 const dns = require("dns");
@@ -265,10 +266,11 @@ app.get("/health", async (req, res) => {
 });
 
 // Protected: only authenticated users can predict
-app.post("/predict", predictLimiter, protect, async (req, res) => {
+// ---> NEW: Added `checkCache` middleware here! <---
+app.post("/predict", predictLimiter, protect, checkCache, async (req, res) => {
   try {
     console.log("Reached /predict");
-    const { text, type, sender } = req.body;
+    const { text, type, sender, confidence_threshold } = req.body;
     console.log("Received:", text, type, sender);
 
     // Check 1: fields must exist
@@ -289,9 +291,7 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
     }
 
     // Check 4: validate type is one of the accepted values
-
     const allowedTypes = ["sms", "email", "url", "message"];
-
     if (!allowedTypes.includes(type.toLowerCase())) {
       return res.status(400).json({
         error: `Invalid type. Allowed values are: ${allowedTypes.join(", ")}.`,
@@ -301,8 +301,7 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
     // Check 5: validate text length
     if (text.trim().length > 5000) {
       return res.status(413).json({
-        error:
-          "Text payload exceeds maximum allowed length of 5000 characters.",
+        error: "Text payload exceeds maximum allowed length of 5000 characters.",
       });
     }
 
@@ -348,7 +347,7 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
         }
 
         console.log(`Rule match found (${rule.type}):`, checkPattern);
-        return res.json({
+        const ruleResult = {
           input: text,
           prediction: prediction,
           confidence: 1.0,
@@ -356,7 +355,14 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
           level_color: isSpam ? "red" : "green",
           level_emoji: isSpam ? "🔴" : "🟢",
           rule_applied: rule.type
-        });
+        };
+        
+        // Cache this rule match result too!
+        if (req.cacheKey) {
+          setCache(req.cacheKey, ruleResult).catch(err => console.error("Cache Save Error:", err));
+        }
+        
+        return res.json(ruleResult);
       }
     }
 
@@ -386,7 +392,7 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
       }
 
       console.log(`Keyword rule match found (${keywordMatch.type}):`, keywordMatch.pattern);
-      return res.json({
+      const kwResult = {
         input: text,
         prediction: prediction,
         confidence: 1.0,
@@ -394,41 +400,64 @@ app.post("/predict", predictLimiter, protect, async (req, res) => {
         level_color: isSpam ? "red" : "green",
         level_emoji: isSpam ? "🔴" : "🟢",
         rule_applied: keywordMatch.type,
-      });
+      };
+
+      if (req.cacheKey) {
+        setCache(req.cacheKey, kwResult).catch(err => console.error("Cache Save Error:", err));
+      }
+
+      return res.json(kwResult);
     }
 
     console.log("Calling Flask...");
 
+    let apiUrl =
+      process.env.VITE_ML_API_URI ||
+      process.env.API ||
+      "http://localhost:5000/predict";
+    // Ensure URL doesn't end with double /predict
+    apiUrl = apiUrl.replace(/\/predict\/?$/, "").replace(/\/$/, "") + "/predict";
+
+    console.time("ML_API_CALL");
     const response = await axios.post(
-      process.env.API || "http://localhost:5000/predict",
+      apiUrl,
       {
         text: text.trim(),
         type: type.toLowerCase(),
+        confidence_threshold: confidence_threshold
       },
       {
         headers: { "X-Forwarded-For": req.ip || req.connection.remoteAddress },
         timeout: Number(process.env.ML_API_TIMEOUT_MS) || 15000,
       }
     );
+    console.timeEnd("ML_API_CALL");
     console.log("Flask responded:", response.data);
 
-    // Save history automatically (best-effort: a DB failure shouldn't break the prediction response)
+    // Save history automatically (best-effort)
     try {
       await History.create({
         user: req.user.id,
         query: text,
         prediction: response.data.prediction,
         type: type,
-        confidence: response.data.confidence,
+        confidence: response.data.confidence || response.data.probability,
       });
     } catch (historyError) {
-
       console.error(`[${req.requestId}] Failed to save history: ${historyError.message}`);
     }
 
-    res.json(response.data);
+    const resultData = response.data;
+
+    // ---> NEW: Asynchronously Save ML Result to Redis Cache <---
+    if (req.cacheKey) {
+      setCache(req.cacheKey, resultData).catch(err => console.error("Cache Save Error:", err));
+    }
+
+    return res.json(resultData);
+
   } catch (error) {
-Sentry.captureException(error, {
+    Sentry.captureException(error, {
       tags: {
         endpoint: '/predict',
         userId: req.user?.id || 'anonymous'
@@ -442,10 +471,8 @@ Sentry.captureException(error, {
 
     console.error(`[${req.requestId}]`, error.message);
 
-    // Distinguish ML API failures (timeout / unavailable / upstream 4xx vs 5xx)
-    // so the frontend can show specific messaging and a retry affordance.
     const { status, body } = classifyMlApiError(error);
-    res.status(status).json(body);
+    return res.status(status).json(body);
   }
 });
 
