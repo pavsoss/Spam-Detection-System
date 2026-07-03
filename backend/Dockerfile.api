@@ -2,18 +2,24 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install NLTK corpora during the image build so the container can run in
+# restricted/read-only environments (no runtime downloads).
+# NLTK downloader honors $NLTK_DATA; we point it to a writable path.
+ENV NLTK_DATA=/tmp/nltk_data
+RUN python -m nltk.downloader punkt stopwords --quiet
+
 COPY linear_svm_model.pkl .
-COPY backend/tfidf_vectorizer.pkl .
+COPY tfidf_vectorizer.pkl .
 COPY label_encoder.pkl .
-COPY backend/url_detector.pkl .
-COPY backend/url_vectorizer.pkl .
-COPY backend/domain_checker.py .
-COPY backend/email_header_analyzer.py .
-COPY backend/explanation_engine.py .
-COPY backend/api.py .
+COPY url_detector.pkl .
+COPY url_vectorizer.pkl .
+COPY domain_checker.py .
+COPY email_header_analyzer.py .
+COPY explanation_engine.py .
+COPY api.py .
 
 EXPOSE 5000
 
@@ -23,3 +29,4 @@ ENV LABEL_ENCODER_PATH=label_encoder.pkl
 ENV FLASK_PORT=5000
 
 CMD ["python", "api.py"]
+
