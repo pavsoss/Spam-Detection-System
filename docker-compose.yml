@@ -3,8 +3,8 @@ services:
   ml-api:
     image: rudra2006/spam-ml-api:latest
     build:
-      context: .
-      dockerfile: backend/Dockerfile.api
+      context: ./backend
+      dockerfile: Dockerfile.api
     container_name: spam_ml_api
     ports:
       - "5000:5000"
