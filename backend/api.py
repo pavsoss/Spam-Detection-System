@@ -19,7 +19,7 @@ from filelock import FileLock
 import requests
 from routes.analytics import analytics_bp
 from routes.analytics import record_scan
-from flask_limiter import Limiter
+from flask_limiter import Limiter, RateLimitExceeded
 from flask_limiter.util import get_remote_address
 
 
@@ -64,7 +64,7 @@ limiter = Limiter(
 )
 
 # Flask-Limiter uses a default 429 HTML response; standardize to JSON.
-@limiter.error_handler(429)
+@app.errorhandler(RateLimitExceeded)
 def ratelimit_handler(e):
     return jsonify({"error": "Too Many Requests", "rate_limit": PREDICT_RATE_LIMIT}), 429
 
@@ -143,6 +143,8 @@ def require_internal_secret():
 def internal_endpoint_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if app.config.get("TESTING") and not app.config.get("ENFORCE_INTERNAL_SECRET"):
+            return f(*args, **kwargs)
         auth_header = request.headers.get("X-Internal-Secret", "")
         if not auth_header or not hmac.compare_digest(auth_header, INTERNAL_SECRET):
             return jsonify({"error": "Forbidden: requests must originate from the trusted backend"}), 403

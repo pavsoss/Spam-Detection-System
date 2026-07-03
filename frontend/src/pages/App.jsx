@@ -233,8 +233,7 @@ const analyzeEmojiSentiment = (text) => {
   const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/g;
   const matches = text.match(emojiRegex) || [];
 
-  if(matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
-  }
+  if (matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
   
   // Sentiment mapping
     const sentimentMap = {
