@@ -362,4 +362,4 @@ const logout = async (req, res) => {
   }
 };
 
-module.exports = { register, login, logout, getMe, googleLogin, updateAvatar, forgotPassword, resetPassword };
+module.exports = { register, login, logout, getMe, googleLogin, updateAvatar, forgotPassword, resetPassword, updateWebhook };
