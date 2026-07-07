@@ -696,18 +696,18 @@ function App() {
                     )}
 
                     <button
-                      onClick={() => {
-                        setText("");
-                        setResult("");
-                        setConfidence(null);
-                        setExplanation(null);
-                        setErrorInfo(null);
-                        setType("message");
+                    onClick={() => {
+                       setText("");
+                       setResult("");
+                       setConfidence(null);
+                       setExplanation(null);
+                       setErrorInfo(null);
+                       setCopied(false);
+                       setType("message");
                       }}
-                      className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${isDark ? activeTheme.btnSecondaryDark : activeTheme.btnSecondary}`}
                     >
-                      Reset
-                    </button>
+  Reset
+</button>
                   </div>
                 )}
 
