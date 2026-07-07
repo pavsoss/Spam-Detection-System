@@ -7,6 +7,13 @@ const { processBulkPrediction } = require('../services/bulkPredictService'); // 
  */
 exports.handleBulkPrediction = async (req, res) => {
   try {
+    
+    if (!req.parsedCSV) {
+      return res.status(400).json({
+        success: false,
+        error: 'CSV data could not be parsed. Please ensure a valid CSV file is uploaded.'
+      });
+    }
     // Access parsed CSV data (provided by validateCSVUpload middleware)
     const { headers, rows, totalRows, filename, size } = req.parsedCSV;
 

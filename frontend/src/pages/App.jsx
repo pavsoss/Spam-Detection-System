@@ -6,7 +6,6 @@ import api from "../utils/axiosInstance";
 import "../App.css";
 import CensorshipMode from '../components/CensorshipMode';
 import FeatureImportance from "../components/FeatureImportance";
-import PredictionExplanation from '../components/PredictionExplanation';
 import PredictionExplanation from "../components/PredictionExplanation";
 import History from "../components/History";
 import WordCloud from "../components/WordCloud";
@@ -36,7 +35,6 @@ function App() {
   const [confidence, setConfidence] = useState(null);
   const [explanation, setExplanation] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [explanation, setExplanation] = useState(null);
   const [type, setType] = useState("message");
   const [errorInfo, setErrorInfo] = useState(null);
   const [wordOfDay, setWordOfDay] = useState(null);
@@ -91,6 +89,28 @@ function App() {
       });
     } catch (e) {
       /* silent fail */
+    }
+  };
+
+  // Helper to get earned badges (returns array of badge objects)
+  const getEarnedBadges = () => {
+    try {
+      const streakCount = parseInt(localStorage.getItem('predictionStreak') || '0', 10);
+      return Object.keys(Badges)
+        .map((k) => ({ day: Number(k), ...Badges[k] }))
+        .filter((b) => streakCount >= b.day);
+    } catch (e) {
+      return [];
+    }
+  };
+
+  // Placeholder for badge checking logic
+  const checkNewBadge = (newStreak) => {
+    // simple implementation: if new streak matches a badge threshold, show popup
+    if (Badges[newStreak]) {
+      setNewBadgeEarned(true);
+      setShowBadgePopup(true);
+      setTimeout(() => setShowBadgePopup(false), 4000);
     }
   };
 
@@ -622,7 +642,7 @@ const analyzeEmojiSentiment = (text) => {
             </div>
 
             {activeTab === "detector" ? (
-              <>
+                <>
                 {/* Enhanced Input Section */}
                 <div className="relative w-full mb-4 group text-left">
                   <textarea
@@ -664,8 +684,8 @@ const analyzeEmojiSentiment = (text) => {
                         {text.length.toLocaleString()} characters
                       </span>
                     )}
-                  </div>
-                  )}
+                  </div>)}
+
                 </div>
 
                 <button
@@ -959,10 +979,10 @@ const analyzeEmojiSentiment = (text) => {
                     <span className="text-sm font-semibold opacity-70">📈 Spam Detection Insights</span>
                     <div className="flex items-center gap-2">
                       {getEarnedBadges().map((badge) => (
-                       <span key={badge.day} className="text-lg" title={badge.name}>
-                        {badge.icon}
-                       </span>
-                    ))}
+                        <span key={badge.day} className="text-lg" title={badge.name}>
+                          {badge.icon}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </div>

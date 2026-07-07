@@ -51,8 +51,9 @@ const DeSpamify = ({ text, darkMode, onClose }) => {
       'YOU WON': 'There is a notification'
     };
     
+    const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     for (const [key, value] of Object.entries(replacements)) {
-      result = result.replace(new RegExp(key, 'gi'), value);
+      result = result.replace(new RegExp(escapeRegex(key), 'gi'), value);
     }
     
     // Clean up extra spaces and punctuation
