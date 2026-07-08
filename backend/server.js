@@ -23,7 +23,9 @@ app.use('/api/evomail', evoMailRoutes);
 // ===== STARTUP TIMER =====
 const SERVER_START_TIME = Date.now();
 const startupLogs = [];
-
+// Add VBSF routes
+const visualRoutes = require('./routes/visualRoutes');
+app.use('/api/visual', visualRoutes);
 const logStartupTime= (component, startTime) => {
   const elapsed = Date.now() - startTime;
   startupLogs.push({ component, elapsed });

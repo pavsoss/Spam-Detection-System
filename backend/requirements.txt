@@ -27,3 +27,10 @@ nltk
 scikit-learn>=1.2.0
 pandas>=1.5.0
 numpy>=1.23.0
+
+pillow>=9.0.0
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+html2image>=2.0.0
