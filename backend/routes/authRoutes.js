@@ -144,6 +144,7 @@ router.post('/avatar', protect, handleAvatarUpload, updateAvatar);
 router.put('/webhook', protect, updateWebhook);
 
 
+
 /**
  * Change Password Validation Rules
  */

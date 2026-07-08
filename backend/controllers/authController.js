@@ -458,7 +458,13 @@ const updateWebhook = async (req, res) => {
   }
 };
 
+
+// @desc    Get user's session status
+// @route   GET /api/auth/session-status
+const getSessionStatus = async (req, res) => {
+
 const logout = async (req, res) => {
+
   try {
     const token = req.token;
     const decoded = jwt.decode(token);
