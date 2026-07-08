@@ -12,6 +12,7 @@ import WordCloud from "../components/WordCloud";
 import ManipulationIndex from '../components/ManipulationIndex';
 import FeedbackWidget from "../components/FeedbackWidget";
 import Login from "./Login.jsx";
+import DeSpamify from '../components/DeSpamify';
 import confetti from 'canvas-confetti';
 import Register from "./Register.jsx";
 import Skeleton from 'react-loading-skeleton';
@@ -22,6 +23,8 @@ import SpamInsightsDashboard from "../components/SpamInsightsDashboard";
 import EmailScannerDashboard from "../components/EmailScannerDashboard";
 import Chatbot from "../components/Chatbot";
 import Footer from "../components/Footer";
+import SpamPatternLibrary from '../components/SpamPatternLibrary';
+import URLPreview from '../components/URLPreview';
 import InstallAppButton from "../components/InstallAppButton";
 import RulesManager from "../components/RulesManager";
 
@@ -35,8 +38,10 @@ function App() {
   const [type, setType] = useState("message");
   const [errorInfo, setErrorInfo] = useState(null);
   const [wordOfDay, setWordOfDay] = useState(null);
+  const [showDeSpamify,setShowDeSpamify]= useState(false);
   const [wordLoading, setWordLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const [hasCelebrated, setHasCelebrated] = useState(() => {
     return localStorage.getItem("firstPrediction") === "true";
   });
@@ -57,6 +62,14 @@ function App() {
   });
 
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Detect URLs in text
+  const detectURLs = (text) => {
+    if (!text) return [];
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+     const matches = text.match(urlRegex);
+      return matches || [];
+    };
 
   const playSpamSound = () => {
     if (!soundEnabled) return;
@@ -195,6 +208,7 @@ function App() {
     }
   };
 
+
   const getTextStats = (text) => {
     if(!text || text.trim().length === 0) {
       return { words: 0, chars: 0, avgWordLength: 0, sentences: 0 };
@@ -210,13 +224,98 @@ function App() {
       sentences
    };
   };
+
+  const detectPatterns = (text) => {
+  const patterns = [];
+  if (!text) return patterns;
+  
+  if (text.includes('!!!') || (text.match(/!/g) || []).length >= 3) {
+    patterns.push({ icon: '🔴', label: 'Multiple exclamation marks', severity: 'medium' });
+  }
+  if (text.match(/http[s]?:\/\/\S+/)) {
+    patterns.push({ icon: '🔗', label: 'Suspicious link detected', severity: 'high' });
+  }
+  if (text.match(/urgent|immediate|act now|asap|hurry/i)) {
+    patterns.push({ icon: '⏰', label: 'Urgency detected', severity: 'medium' });
+  }
+  if (text.match(/free|win|prize|claim|winner|congratulations|bonus|offer/i)) {
+    patterns.push({ icon: '🎯', label: 'Incentive bait detected', severity: 'medium' });
+  }
+  if (text.match(/[A-Z]{5,}/)) {
+    patterns.push({ icon: '🔊', label: 'Excessive caps detected', severity: 'low' });
+  }
+  if (text.match(/[^a-zA-Z0-9\s]/g) && (text.match(/[^a-zA-Z0-9\s]/g) || []).length > 10) {
+    patterns.push({ icon: '💀', label: 'Many special characters', severity: 'low' });
+  }
+  if (text.match(/\b\d{10,}\b/)) {
+    patterns.push({ icon: '📱', label: 'Phone number detected', severity: 'medium' });
+  }
+  if (text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)) {
+    patterns.push({ icon: '📧', label: 'Email address detected', severity: 'low' });
+  }
+  if (text.match(/password|credit card|bank account|ssn|social security/i)) {
+    patterns.push({ icon: '🔒', label: 'Sensitive data request', severity: 'high' });
+  }
+  if (text.match(/click here|visit|subscribe|download|sign up|register/i)) {
+    patterns.push({ icon: '👆', label: 'Call to action detected', severity: 'low' });
+  }
+  
+  return patterns;
+};
+
+//Emoji Sentiment Analysis
+const analyzeEmojiSentiment = (text) => {
+  if (!text) return { positive: 0, negative: 0, neutral: 0 };
+
+  const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/g;
+  const matches = text.match(emojiRegex) || [];
+
+  if (matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
+  
+  // Sentiment mapping
+    const sentimentMap = {
+    '😊': 'positive', '😃': 'positive', '😄': 'positive', '❤️': 'positive', '🎉': 'positive',
+    '👍': 'positive', '✨': 'positive', '🔥': 'positive', '🌟': 'positive', '💯': 'positive',
+    '😢': 'negative', '😭': 'negative', '😠': 'negative', '😡': 'negative', '💀': 'negative',
+    '😐': 'neutral', '🤔': 'neutral', '🧐': 'neutral', '😑': 'neutral'
+  };
+  
+  const sentiments = matches.map(e => sentimentMap[e] || 'neutral');
+  const positive = sentiments.filter(s => s === 'positive').length;
+  const negative = sentiments.filter(s => s === 'negative').length;
+  
+  let overall = 'neutral';
+  if (positive > negative) overall = 'positive';
+  else if (negative > positive) overall = 'negative';
+  
+  // Check for spam emojis
+  const spamEmojis = ['💸', '💰', '🎁', '🏆', '💎', '🚨', '⚠️', '🎰', '🤑'];
+  const spamMatches = matches.filter(e => spamEmojis.includes(e));
+  
+  return {
+    count: matches.length,
+    emojis: matches,
+    sentiment: overall,
+    positive: positive,
+    negative: negative,
+    neutral: sentiments.filter(s => s === 'neutral').length,
+    spamDetected: spamMatches.length > 0,
+    spamEmojis: spamMatches
+  };
+};
+
   const fetchWordOfTheDay = async () => {
     try {
       setWordLoading(true);
-      const res = await api.get(`${import.meta.env.VITE_API_URI}/api/v1/spam/word-of-the-day`);
-      setWordOfDay(res.data);
-    } catch (error) {
-      console.error('Failed to fetch word of the day:', error);
+      const res = await api.get('/api/word-of-the-day');
+      if (res.data.success) {
+        setWordOfDay(res.data.data);
+      } else {
+        setWordOfDay(null);
+      }
+    } catch (err) {
+      console.error("Error fetching word of the day:", err);
+      setWordOfDay(null);
     } finally {
       setWordLoading(false);
     }
@@ -244,13 +343,44 @@ function App() {
       setExplanation(res.data.explanation || null);
       setErrorInfo(null);
     } catch (error) {
-      setResult("Error");
-      setErrorInfo({
-        title: "Analysis Failed",
-        message: error.response?.data?.error || error.message || "Something went wrong",
-        retryable: true
-      });
-    } finally {
+      console.error('API Error:', error);
+
+      let errorTitle = "Something went wrong";
+      let errorMessage = "Please try again later.";
+      let retryable = true;
+
+      // Check for specific error types
+      if (error.response == 'ECONNABORTED') {
+        errorTitle = "Request Timeout";
+        errorMessage = "The request took too long to complete. Please try again.";
+        retryable = true;
+      } else if (error.code === 'ERR_NETWORK' || !error.response) {
+    errorTitle = "📡 Network Error";
+    errorMessage = "Unable to connect to the server. Please check your internet connection.";
+    retryable = true;
+  } else if (error.response?.status === 401) {
+    errorTitle = "🔐 Authentication Required";
+    errorMessage = "Your session has expired. Please login again.";
+    retryable = false;
+  } else if (error.response?.status === 404) {
+    errorTitle = "🔧 Service Unavailable";
+    errorMessage = "The prediction service is currently unavailable. Please try again later.";
+    retryable = true;
+  } else if (error.response?.status >= 500) {
+    errorTitle = "⚠️ Server Error";
+    errorMessage = "Something went wrong on our end. Our team has been notified.";
+    retryable = true;
+  } else if (error.response?.data?.error) {
+    errorMessage = error.response.data.error;
+  }
+  
+  setResult("Error");
+  setErrorInfo({
+    title: errorTitle,
+    message: errorMessage,
+    retryable: retryable
+  });
+  } finally {
       setLoading(false);
 
       const today = new Date().toDateString();
@@ -477,12 +607,27 @@ function App() {
                 onClick={() => setActiveTab("rules")}
                 className={`pb-1 px-4 transition-all border-b-2 ${activeTab === "rules" ? "border-current opacity-100" : "border-transparent opacity-50 hover:opacity-75"}`}
               >
+              <button
+                 onClick={() => setShowPatternLibrary(true)}
+                 className="px-4 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center gap-2 shadow-md"
+              >
+              Patterns
+              </button>
                 Rules Manager
               </button>
               <button
                 onClick={() => setActiveTab("history")}
                 className={`pb-1 px-4 transition-all border-b-2 ${activeTab === "history" ? "border-current opacity-100" : "border-transparent opacity-50 hover:opacity-75"}`}
               >
+              {(result === "spam" || result === "malicious" || result === "smishing") && (
+              <button
+              onClick={() => setShowDeSpamify(true)}
+              className="mt-3 px-4 py-2 rounded-lg bg-purple-500 hover:bg-purple-600 text-white font-semibold transition"
+              >
+              De-Spamify Message
+              </button>
+              )}
+
                 History
               </button>
               <button
@@ -626,6 +771,12 @@ function App() {
                         {result === "Error" && "⚠️ Error"}
                       </span>
                     </div>
+                     
+                    <URLPreview url={text} darkMode={isDark}>
+                      <span className="text-blue-500 underline cursor-pointer">
+                       {text}
+                      </span>
+                    </URLPreview>
 
                     {explanation && result !== "Error" && (
                     <PredictionExplanation 
@@ -656,6 +807,60 @@ function App() {
                         <div className={`w-full rounded-full h-2 ${isDark ? "bg-slate-800" : "bg-slate-200"}`}>
                           <div className={`h-3 rounded-full transition-all duration-500 ${result === "ham" || result === "safe" ? "bg-green-500" : result === "spam" || result === "malicious" ? "bg-red-500" : "bg-orange-500"}`} style={{ width: `${confidencePct}%` }} />
                         </div>
+                    {/* Pattern Tags - Show only for spam/malicious/smishing */}
+                    {(result === "spam" || result === "malicious" || result === "smishing") && detectPatterns(text).length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-slate-700/20">
+                       <p className="text-xs font-semibold opacity-70 mb-2 flex items-center gap-1">
+                       <span>🚨</span> Spam Indicators
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {detectPatterns(text).map((pattern, index) => (
+                         <span 
+                          key={index}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border
+                          ${pattern.severity === 'high' 
+                          ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700' 
+                          : pattern.severity === 'medium' 
+                          ? 'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-700'
+                          : 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700'}`}
+                        >
+                          <span>{pattern.icon}</span>
+                         <span>{pattern.label}</span>
+                      </span>
+                    ))}
+
+                    {/* Emoji Sentiment Analysis */}
+                    {result && result !== "Error" && text && analyzeEmojis(text).count > 0 && (
+                     <div className="mt-4 pt-3 border-t border-slate-700/20">
+                      <p className="text-xs font-semibold opacity-70 mb-2 flex items-center gap-1">
+                         <span>😊</span> Emoji Sentiment
+                      </p>
+                     <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-lg">
+                        {analyzeEmojis(text).emojis.join(' ')}
+                         </span>
+                         <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                         analyzeEmojis(text).sentiment === 'positive' 
+                         ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
+                         : analyzeEmojis(text).sentiment === 'negative'
+                         ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                         : 'bg-gray-100 text-gray-700 dark:bg-gray-800/30 dark:text-gray-400'
+                        }`}>
+                        {analyzeEmojis(text).sentiment === 'positive' && '😊 Positive'}
+                        {analyzeEmojis(text).sentiment === 'negative' && '😢 Negative'}
+                        {analyzeEmojis(text).sentiment === 'neutral' && '😐 Neutral'}
+                        </span>
+                        {analyzeEmojis(text).spamDetected && (
+                         <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500 text-white">
+                          ⚠️ Spam Emojis
+                         </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
                         <div className="mb-5">
                           <p className="text-sm opacity-70 mb-2">Risk Level</p>
@@ -710,6 +915,19 @@ function App() {
 </button>
                   </div>
                 )}
+
+                {showDeSpamify && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="w-full max-w-2xl">
+                    <DeSpamify
+                    text={text}
+                    darkMode={isDark}
+                    onClose={() => setShowDeSpamify(false)}
+                  />
+                  </div>
+                </div>
+                )}
+
 
                 <FeatureImportance darkMode={isDark} />
                 <CensorshipMode text={text} darkMode={isDark} />
@@ -832,5 +1050,4 @@ function App() {
     </div>
   );
 }
-
 export default App;

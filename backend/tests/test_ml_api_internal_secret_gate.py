@@ -34,7 +34,9 @@ def client():
     api_module.app.config["ENFORCE_INTERNAL_SECRET"] = False
 
 
-VALID_SECRET = {"X-Internal-Secret": "super-secret-internal-key"}
+from conftest import TEST_INTERNAL_SECRET
+
+VALID_SECRET = {"X-Internal-Secret": TEST_INTERNAL_SECRET}
 
 
 def test_predict_rejected_without_secret(client):
@@ -62,7 +64,7 @@ def test_predict_allowed_with_valid_secret(client):
     assert res.get_json()["result"] in {"spam", "ham", "smishing", "unknown"}
 
 
-@pytest.mark.parametrize("path", ["/importance", "/api/wordcloud", "/spam-insights"])
+@pytest.mark.parametrize("path", ["/importance", "/api/wordcloud", "/spam-insights", "/api/word-of-the-day"])
 def test_other_ml_routes_rejected_without_secret(client, path):
     res = client.get(path)
     assert res.status_code == 403
