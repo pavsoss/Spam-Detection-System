@@ -5,8 +5,7 @@ const historyArchiveSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     message: { type: String, required: true },
     prediction: { type: String, required: true },
-    confidenceScore: { type: Number },
-    createdAt: { type: Date, default: Date.now }
+    confidenceScore: { type: Number }
 }, {
     timestamps: true,
     collection: 'history_archive' // Explicitly naming the cold storage collection

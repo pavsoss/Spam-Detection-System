@@ -40,6 +40,8 @@ function App() {
   const [wordOfDay, setWordOfDay] = useState(null);
   const [showDeSpamify,setShowDeSpamify]= useState(false);
   const [wordLoading, setWordLoading] = useState(false);
+  const [lastCall, setLastCall] = useState(0);
+  const [rateLimitError, setRateLimitError] = useState('');
   const [copied, setCopied] = useState(false);
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const [hasCelebrated, setHasCelebrated] = useState(() => {
@@ -327,7 +329,17 @@ const analyzeEmojiSentiment = (text) => {
 
   const handlePredict = async () => {
     if (!text || text.trim().length === 0) return;
-    try {
+    const now = Date.now();
+    if (now - lastCall < 1000) {
+      setRateLimitError('⏳ Please wait a moment before analyzing again.');
+      setTimeout(() => setRateLimitError(''), 2000);
+    return;
+    }
+    setLastCall(now);
+    setRateLimitError('');
+  
+    if (loading) return;
+      try {
       setLoading(true);
       const res = await api.post(`${import.meta.env.VITE_API_URI}/predict`, {
         text: text,
@@ -792,6 +804,11 @@ const analyzeEmojiSentiment = (text) => {
                       result={result} 
                       darkMode={isDark} 
                     />
+                    {rateLimitError && (
+                      <div className="mt-2 p-2 text-sm text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30 dark:text-yellow-400 rounded-lg">
+                      {rateLimitError}
+                    </div>
+                    )}
 
                     {confidence !== null && result !== "Error" && (
                       <>
@@ -901,14 +918,14 @@ const analyzeEmojiSentiment = (text) => {
                     )}
 
                     <button
-                    onClick={() => {
-                       setText("");
-                       setResult("");
-                       setConfidence(null);
-                       setExplanation(null);
-                       setErrorInfo(null);
-                       setCopied(false);
-                       setType("message");
+                      onClick={() => {
+                      setText("");
+                      setResult("");
+                      setConfidence(null);
+                      setExplanation(null);
+                      setErrorInfo(null);
+                      setCopied(false);
+                      setType("message");
                       }}
                     >
   Reset

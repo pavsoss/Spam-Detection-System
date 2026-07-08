@@ -29,6 +29,43 @@ model         = joblib.load(BASE_DIR / "linear_svm_model.pkl")
 vectorizer    = joblib.load(BASE_DIR / "backend" / "tfidf_vectorizer.pkl")
 label_encoder = joblib.load(BASE_DIR / "label_encoder.pkl")
 
+# ── Load URL models if they exist ─────────────────────────────────────────────
+URL_MODEL_PATH = BASE_DIR / "url_detector.pkl"
+URL_VECTORIZER_PATH = BASE_DIR / "backend" / "url_vectorizer.pkl"
+if not URL_VECTORIZER_PATH.exists():
+    URL_VECTORIZER_PATH = BASE_DIR / "url_vectorizer.pkl"
+
+if URL_MODEL_PATH.exists() and URL_VECTORIZER_PATH.exists():
+    url_model = joblib.load(URL_MODEL_PATH)
+    url_vectorizer = joblib.load(URL_VECTORIZER_PATH)
+else:
+    url_model = None
+    url_vectorizer = None
+
+URL_LABELS = {0: "safe", 1: "malicious"}
+SUSPICIOUS_TLDS = {
+    "tk", "ml", "ga", "cf", "gq", "xyz", "top", "work", "click", "loan", "men", "review",
+}
+import re
+from urllib.parse import urlparse
+IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+
+def heuristic_url_is_malicious(url):
+    candidate = url if "://" in url else f"http://{url}"
+    host = urlparse(candidate).hostname or ""
+    if not host:
+        return False
+    if "@" in url:
+        return True
+    if IPV4_RE.match(host):
+        return True
+    if host.startswith("xn--") or ".xn--" in host:
+        return True
+    if host.count("-") >= 3:
+        return True
+    tld = host.rsplit(".", 1)[-1] if "." in host else ""
+    return tld in SUSPICIOUS_TLDS
+
 xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label_encoder)
 
 app = FastAPI(title="Spam Detection System")

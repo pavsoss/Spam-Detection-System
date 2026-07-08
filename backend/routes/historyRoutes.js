@@ -29,5 +29,5 @@ router.delete("/:id", deleteHistoryItem);
 // Clear all history
 router.delete("/", clearHistory);
 
-router.get('/count', protect,getHistoryCount);
+router.get('/count', getHistoryCount);
 module.exports = router;
