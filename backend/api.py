@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 import csv
 import joblib
 import numpy as np
@@ -19,17 +19,24 @@ from filelock import FileLock
 import requests
 from routes.analytics import analytics_bp
 from routes.analytics import record_scan
+from flask_limiter import Limiter
+from flask_limiter.errors import RateLimitExceeded
+from flask_limiter.util import get_remote_address
+
 
 # Try to import NLTK for stopwords (optional)
 try:
     import nltk
     from nltk.corpus import stopwords
     from nltk.tokenize import word_tokenize
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
+    # Do NOT download NLTK corpora at runtime. In restricted / read-only
+    # containers this can crash the app on startup with PermissionError.
+    # Ensure required corpora (punkt, stopwords) are installed during Docker
+    # build and/or via a writable NLTK_DATA location.
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "email_connectors"))
 from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
@@ -45,6 +52,24 @@ app = Flask(__name__)
 
 xai_engine = ExplanationEngine()
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
+
+# ── Rate limiting (ML inference protection) ──────────────────────────────────
+# Limit expensive prediction endpoints per client IP to mitigate CPU spikes.
+# Default: ~50 predictions per minute per IP.
+PREDICT_RATE_LIMIT = os.getenv("PREDICT_RATE_LIMIT", "50 per minute")
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[PREDICT_RATE_LIMIT],
+)
+
+# Flask-Limiter uses a default 429 HTML response; standardize to JSON.
+@app.errorhandler(RateLimitExceeded)
+def ratelimit_handler(e):
+    return jsonify({"error": "Too Many Requests", "rate_limit": PREDICT_RATE_LIMIT}), 429
+
+
 
 # Shared secret that the trusted Node/Express backend attaches to every request
 # (see the axios interceptor in server.js). Enforcing it on every ML API call
@@ -119,6 +144,8 @@ def require_internal_secret():
 def internal_endpoint_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if app.config.get("TESTING") and not app.config.get("ENFORCE_INTERNAL_SECRET"):
+            return f(*args, **kwargs)
         auth_header = request.headers.get("X-Internal-Secret", "")
         if not auth_header or not hmac.compare_digest(auth_header, INTERNAL_SECRET):
             return jsonify({"error": "Forbidden: requests must originate from the trusted backend"}), 403
@@ -156,9 +183,146 @@ label_encoder = joblib.load(LABEL_ENCODER_PATH)
 from xai_service import XAIService
 xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label_encoder)
 
-# In-memory storage for spam words (for demo purposes)
-# In production, use a database
-spam_words_storage = {}
+# SQLite Persistent Storage for spam words
+import sqlite3
+from datetime import datetime, timezone
+
+def _db_connection():
+    conn = sqlite3.connect(imap_store.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_spam_words_db():
+    with _db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spam_word_frequencies (
+                word TEXT NOT NULL,
+                day TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (word, day)
+            )
+            """
+        )
+        conn.commit()
+
+def increment_spam_word_frequency(word):
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO spam_word_frequencies (word, day, count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(word, day) DO UPDATE SET count = count + 1
+            """,
+            (word, day)
+        )
+        conn.commit()
+
+def get_db_wordcloud_data():
+    with _db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT word, SUM(count) as total_count
+            FROM spam_word_frequencies
+            GROUP BY word
+            ORDER BY total_count DESC
+            LIMIT 50
+            """
+        ).fetchall()
+        return [{"word": row["word"], "count": row["total_count"]} for row in rows]
+
+SPAM_WORD_METADATA = {
+    "free": {
+        "definition": "Offered without cost or payment, frequently used in spam messages to lure users into clicking links.",
+        "context": "Get FREE access now! No credit card required.",
+        "tips": "Be highly skeptical of 'free' offers; they are often bait for phishing, subscriptions, or malware."
+    },
+    "win": {
+        "definition": "Be successful or victorious in a contest or raffle, typically fake in spam/phishing messages.",
+        "context": "You have won a $1000 Walmart Gift Card! Claim here.",
+        "tips": "If you didn't enter a contest, you didn't win anything. Never enter personal details to claim a 'prize'."
+    },
+    "urgent": {
+        "definition": "Requiring immediate action or attention, used to induce panic and quick, unthinking decisions.",
+        "context": "URGENT: Your account has been compromised. Verify your details within 24 hours.",
+        "tips": "Phishers use artificial urgency to make you act before you think. Verify independently with the service."
+    },
+    "prize": {
+        "definition": "An award given to the winner of a competition, often used as bait in promotional spam.",
+        "context": "Your special prize is waiting! Click here to claim.",
+        "tips": "Legitimate organizations don't send SMS/emails with sketchy links to claim randomly awarded prizes."
+    },
+    "cash": {
+        "definition": "Money in coins or notes, commonly promised in financial spam and advance-fee fraud schemes.",
+        "context": "Earn quick cash from home! Make $500/day.",
+        "tips": "Beware of 'get rich quick' or easy work-from-home offers. They are often scams or money-laundering operations."
+    },
+    "offer": {
+        "definition": "A proposal or bid, frequently restricted in time to force immediate response.",
+        "context": "Exclusive limited time offer: Save 90% on this software.",
+        "tips": "Always check the domain of the offer. Avoid clicking promotional links from unknown senders."
+    },
+    "guaranteed": {
+        "definition": "Formally assured, commonly used in deceptive promises of loans, earnings, or cures.",
+        "context": "Guaranteed approval for home loans up to $50,000.",
+        "tips": "No financial service can guarantee approval without screening. This is a common trap for upfront fees."
+    },
+    "click": {
+        "definition": "Press a link or button, directing users to external phishing or credential harvesting pages.",
+        "context": "Click this link to restore access to your banking portal.",
+        "tips": "Never click direct links in unexpected emails/texts requesting login credentials. Go to the site manually."
+    }
+}
+
+def get_word_of_the_day_data():
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    word_row = None
+    with _db_connection() as conn:
+        word_row = conn.execute(
+            """
+            SELECT word, SUM(count) as total_count
+            FROM spam_word_frequencies
+            WHERE day = ?
+            GROUP BY word
+            ORDER BY total_count DESC
+            LIMIT 1
+            """,
+            (day,)
+        ).fetchone()
+        
+        if not word_row:
+            word_row = conn.execute(
+                """
+                SELECT word, SUM(count) as total_count
+                FROM spam_word_frequencies
+                GROUP BY word
+                ORDER BY total_count DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            
+    if word_row:
+        word = word_row["word"]
+        count = word_row["total_count"]
+    else:
+        word = "free"
+        count = 0
+        
+    metadata = SPAM_WORD_METADATA.get(word, {
+        "definition": "A keyword commonly appearing in unsolicited messages, flagged by the system as a potential spam indicator.",
+        "context": f"Important notification: Please review this {word}.",
+        "tips": f"Treat messages containing '{word}' with caution. Verify the sender's identity and watch out for unsolicited requests."
+    })
+    
+    return {
+        "word": word,
+        "count": count if count > 0 else None,
+        "definition": metadata["definition"],
+        "context": metadata["context"],
+        "tips": metadata["tips"]
+    }
+
 app.model = model
 app.vectorizer = vectorizer
 app.label_encoder = label_encoder
@@ -170,7 +334,7 @@ app.register_blueprint(analytics_bp)
 url_model = joblib.load(URL_MODEL_PATH)
 url_vectorizer = joblib.load(URL_VECTORIZER_PATH)
 # url_detector.pkl predicts numeric classes with no bundled label encoder
-URL_LABELS = {0: "malicious", 1: "safe"}
+URL_LABELS = {0: "safe", 1: "malicious"}
 
 # Heuristic checks to catch obviously malicious URL patterns that the
 # model is too biased toward "safe" to flag on its own.
@@ -210,6 +374,29 @@ LOG_FILE = OUTPUT_DIR / "api.log"
 FEEDBACK_LABELS = set(label_encoder.classes_)
 
 
+# ==========================================
+# DISTRIBUTED TRACING & OBSERVABILITY (Issue #500)
+# ==========================================
+@app.before_request
+def capture_request_id():
+    """Extracts the unique Request ID sent from the Node.js API Gateway"""
+    # Exclude public paths from strict tracing if needed, but capture if available
+    g.request_id = request.headers.get("X-Request-ID", "unknown-ml-req")
+
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    """Global error handler that includes the Correlation ID in logs and responses"""
+    request_id = getattr(g, 'request_id', 'unknown-ml-req')
+    with open(LOG_FILE, "a") as f:
+        from datetime import datetime
+        f.write(f"{datetime.now()} - [Request-ID: {request_id}] CRITICAL ERROR: {str(e)}\n")
+    
+    return jsonify({
+        "error": "Internal ML Server Error",
+        "message": str(e),
+        "request_id": request_id
+    }), 500
+
 @app.route("/")
 def home():
     return "ML API Running 🚀"
@@ -219,8 +406,45 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def make_prediction_response(
+    input_text,
+    result,
+    confidence_score,
+    decision_score,
+    confidence_level,
+    detected_language="en",
+    translated=False,
+    translated_text=None,
+    domain_analysis=None,
+    explanation=None
+):
+    """Enforces a strict standardized response schema for all predictions."""
+    response = {
+        "input": input_text,
+        "result": result,
+        "prediction": result,
+        "confidence": round(float(confidence_score) / 100.0, 4) if confidence_score is not None else 0.0,
+        "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
+        "decision_score": float(decision_score) if decision_score is not None else None,
+        "confidence_level": confidence_level,
+        "detected_language": detected_language,
+        "translated": translated
+    }
+    if translated and translated_text:
+        response["translated_text"] = translated_text
+    if domain_analysis is not None:
+        response["domain_analysis"] = domain_analysis
+    if explanation is not None:
+        response["explanation"] = explanation
+    return response
+
+
 @app.route("/predict", methods=["POST"])
+@limiter.limit(PREDICT_RATE_LIMIT)
 def predict():
+    # Initialize final_output to prevent NameError/UnboundLocalError in case of early/conditional references
+    final_output = None
+
     try:
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -251,16 +475,18 @@ def predict():
                 )
             }), 400
 
+
         # Translate incoming text to English if it is not in English
         original_text = text
         detected_language = "en"
         translated = False
-        
+
         # Reject whitespace-only input before it reaches the model: a blank
         # string would otherwise be vectorized to an arbitrary, meaningless
         # label. (Missing/empty text is already handled by the check above.)
         if isinstance(text, str) and not text.strip():
             return jsonify({"error": "No text provided"}), 400
+
 
         if input_type != "url" and text.strip():
             try:
@@ -285,62 +511,54 @@ def predict():
                 except Exception:
                     pass
 
-        # Get spam prediction
-        text_vector = vectorizer.transform([text])
-        prediction = model.predict(text_vector)
-        final_output = label_encoder.inverse_transform(prediction)[0]
-
-        # Confidence using decision function for LinearSVC
-        try:
-            scores = model.decision_function(text_vector)
-            confidence = round(float(np.max(scores)), 4)
-        except Exception:
-            confidence = None
-        
         # Get domain analysis
         domain_analysis = analyze_text(text)
+
+        # Prediction (supports both message and url)
         if input_type == "url":
             text_vector = url_vectorizer.transform([text])
             prediction = url_model.predict(text_vector)
             final_output = URL_LABELS.get(int(prediction[0]), "unknown")
-            confidence = 0.90
             if final_output == "safe" and heuristic_url_is_malicious(text):
                 final_output = "malicious"
         else:
             text_vector = vectorizer.transform([text])
             prediction = model.predict(text_vector)
             final_output = label_encoder.inverse_transform(prediction)[0]
-            confidence = 0.90
 
-         # ─── GET CONFIDENCE SCORE ──────────────────────────────────────
-        # Get probability/confidence from model
-        confidence = 95.0 #default fallback percentage
+        confidence_score = 95.0  # fallback percentage
+        decision_score = None
         try:
             active_model = url_model if input_type == "url" else model
-            # If model has predict_proba
-            if hasattr(active_model, 'predict_proba'):
+            if hasattr(active_model, "predict_proba"):
                 proba = active_model.predict_proba(text_vector)
-                confidence = round(max(proba[0]) * 100, 2)
-            elif hasattr(active_model, 'decision_function'):
-                import numpy as np
+                confidence_score = round(float(max(proba[0])) * 100, 2)
+                # Decision score is the raw distance for the winning class
                 decision = active_model.decision_function(text_vector)
                 if isinstance(decision, np.ndarray):
-                    score = float(np.max(np.abs(decision)))
+                    decision_score = float(np.max(np.abs(decision)))
                 else:
-                    score = float(abs(decision))
-                # Sigmoid mapping to pseudo-probability percentage
-                prob = 1.0 / (1.0 + np.exp(-score))
-                confidence = round(prob * 100, 2)
+                    decision_score = float(abs(decision))
+            elif hasattr(active_model, "decision_function"):
+                decision = active_model.decision_function(text_vector)
+                if isinstance(decision, np.ndarray):
+                    decision_score = float(np.max(np.abs(decision)))
+                else:
+                    decision_score = float(abs(decision))
+                # Convert to pseudo‑probability
+                prob = 1.0 / (1.0 + np.exp(-decision_score))
+                confidence_score = round(prob * 100, 2)
         except Exception:
-            # Fallback: safely set confidence to 0 when prediction probability fails
-            confidence = 0.0
-        
+            confidence_score = 0.0
+            decision_score = None
+
         # ─── DETERMINE CONFIDENCE LEVEL ───────────────────────────────
-        if confidence >= 80:
+
+        if confidence_score >= 80:
             confidence_level = "high"
             level_color = "green"
             level_emoji = "🟢"
-        elif confidence >= 60:
+        elif confidence_score >= 60:
             confidence_level = "medium"
             level_color = "yellow"
             level_emoji = "🟡"
@@ -353,8 +571,12 @@ def predict():
         if final_output == "spam":
             words = extract_words(text)
             for word in words:
-                spam_words_storage[word] = spam_words_storage.get(word, 0) + 1
+                try:
+                    increment_spam_word_frequency(word)
+                except Exception as e:
+                    print(f"[db-wordcloud] failed to increment word '{word}': {e}")
 
+       # Log prediction with Trace ID
         # Record the scan now that the prediction label is known.
         record_scan(text, final_output, input_type)
 
@@ -362,34 +584,33 @@ def predict():
         text_preview = text[:50] + "..." if len(text) > 50 else text
         with open(LOG_FILE, "a") as f:
             from datetime import datetime
-            f.write(f"{datetime.now()} - Prediction: '{text_preview}' -> {final_output}\n")
+            f.write(f"{datetime.now()} - [Request-ID: {getattr(g, 'request_id', 'unknown')}] Prediction: '{text_preview}' -> {final_output}\n")
         
         # Generate XAI explanation for the input text
         explanation = xai_engine.analyze(text, input_type=input_type)
 
-        # Return response with domain analysis and explanation
-        response_data = {
-            "input": original_text,
-            "result": final_output,
-            "prediction": final_output,
-            "domain_analysis": domain_analysis,
-            "explanation": explanation,
-            "detected_language": detected_language,
-            "translated": translated,
-        }
-        if translated:
-            response_data["translated_text"] = text
-        if confidence is not None:
-            response_data["confidence"] = confidence
+        # Return response using helper
+        response_data = make_prediction_response(
+            input_text=original_text,
+            result=final_output,
+            confidence_score=confidence_score,
+            decision_score=decision_score,
+            confidence_level=confidence_level,
+            detected_language=detected_language,
+            translated=translated,
+            translated_text=text if translated else None,
+            domain_analysis=domain_analysis,
+            explanation=explanation
+        )
 
         return jsonify(response_data)
 
     except Exception as e:
+        request_id = getattr(g, 'request_id', 'unknown')
         with open(LOG_FILE, "a") as f:
             from datetime import datetime
-            f.write(f"{datetime.now()} - ERROR: {str(e)}\n")
-        return jsonify({"error": str(e)}), 500
-
+            f.write(f"{datetime.now()} - [Request-ID: {request_id}] ERROR: {str(e)}\n")
+        return jsonify({"error": str(e), "request_id": request_id}), 500
 
 def extract_words(text):
     """Extract words from text, remove stopwords and punctuation."""
@@ -410,12 +631,13 @@ def extract_words(text):
 
 
 def get_wordcloud_data():
-    """Return stored spam word frequencies."""
-    if spam_words_storage:
-        # Sort by frequency and return top 50
-        sorted_words = sorted(spam_words_storage.items(), key=lambda x: x[1], reverse=True)
-        return [{"word": w, "count": c} for w, c in sorted_words[:50]]
-    return None
+    """Return stored spam word frequencies from database."""
+    try:
+        data = get_db_wordcloud_data()
+        return data if data else None
+    except Exception as e:
+        print(f"[db-wordcloud] failed to get wordcloud data: {e}")
+        return None
 
 
 # Common spam words (fallback sample data)
@@ -454,6 +676,24 @@ def get_wordcloud():
             "source": "sample"
         })
         
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/word-of-the-day', methods=['GET'])
+def get_word_of_the_day():
+    """
+    Get the spam word of the day with metadata (definition, context, safety tips).
+    """
+    try:
+        word_data = get_word_of_the_day_data()
+        return jsonify({
+            "success": True,
+            "data": word_data
+        })
     except Exception as e:
         return jsonify({
             "success": False,
@@ -530,7 +770,7 @@ def analyze_email_header():
             data = request.get_json(silent=True) or {}
             headers = data.get("headers", "")
 
-        if not headers or not headers.strip():
+        if not headers or not isinstance(headers, str) or not headers.strip():
             return jsonify({"error": "No email headers provided"}), 400
             
         analysis = analyze_headers(headers)
@@ -712,6 +952,7 @@ def scan_emails_route():
 
 
 imap_store.init_db()
+init_spam_words_db()
 scheduler = BackgroundScheduler()
 scheduler.start()
 

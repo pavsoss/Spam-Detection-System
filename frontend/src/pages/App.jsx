@@ -4,10 +4,12 @@ import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import api from "../utils/axiosInstance";
 import "../App.css";
+import CensorshipMode from '../components/CensorshipMode';
 import FeatureImportance from "../components/FeatureImportance";
 import PredictionExplanation from "../components/PredictionExplanation";
 import History from "../components/History";
 import WordCloud from "../components/WordCloud";
+import ManipulationIndex from '../components/ManipulationIndex';
 import FeedbackWidget from "../components/FeedbackWidget";
 import Login from "./Login.jsx";
 import DeSpamify from '../components/DeSpamify';
@@ -38,8 +40,10 @@ function App() {
   const [wordOfDay, setWordOfDay] = useState(null);
   const [showDeSpamify,setShowDeSpamify]= useState(false);
   const [wordLoading, setWordLoading] = useState(false);
+  const [lastCall, setLastCall] = useState(0);
+  const [rateLimitError, setRateLimitError] = useState('');
   const [copied, setCopied] = useState(false);
-  const[SpamPatternLibrary, setSpamPatternLibrary] = useState(false);
+  const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const [hasCelebrated, setHasCelebrated] = useState(() => {
     return localStorage.getItem("firstPrediction") === "true";
   });
@@ -87,6 +91,28 @@ function App() {
       });
     } catch (e) {
       /* silent fail */
+    }
+  };
+
+  // Helper to get earned badges (returns array of badge objects)
+  const getEarnedBadges = () => {
+    try {
+      const streakCount = parseInt(localStorage.getItem('predictionStreak') || '0', 10);
+      return Object.keys(Badges)
+        .map((k) => ({ day: Number(k), ...Badges[k] }))
+        .filter((b) => streakCount >= b.day);
+    } catch (e) {
+      return [];
+    }
+  };
+
+  // Placeholder for badge checking logic
+  const checkNewBadge = (newStreak) => {
+    // simple implementation: if new streak matches a badge threshold, show popup
+    if (Badges[newStreak]) {
+      setNewBadgeEarned(true);
+      setShowBadgePopup(true);
+      setTimeout(() => setShowBadgePopup(false), 4000);
     }
   };
 
@@ -184,6 +210,23 @@ function App() {
     }
   };
 
+
+  const getTextStats = (text) => {
+    if(!text || text.trim().length === 0) {
+      return { words: 0, chars: 0, avgWordLength: 0, sentences: 0 };
+    }
+    const words = text.trim().split(/\s+/);
+    const chars = text.replace(/\s+/g, '').length;
+    const avgWordLength = words.length > 0 ? (chars / words.length).toFixed(1) : 0;
+    const sentences = text.trim().split(/[.!?]+/).filter(Boolean).length;
+    return{
+      words: words.length,
+      chars,
+      avgWordLength,
+      sentences
+   };
+  };
+
   const detectPatterns = (text) => {
   const patterns = [];
   if (!text) return patterns;
@@ -229,8 +272,7 @@ const analyzeEmojiSentiment = (text) => {
   const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/g;
   const matches = text.match(emojiRegex) || [];
 
-  if(matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
-  }
+  if (matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
   
   // Sentiment mapping
     const sentimentMap = {
@@ -264,13 +306,40 @@ const analyzeEmojiSentiment = (text) => {
   };
 };
 
+  const fetchWordOfTheDay = async () => {
+    try {
+      setWordLoading(true);
+      const res = await api.get('/api/word-of-the-day');
+      if (res.data.success) {
+        setWordOfDay(res.data.data);
+      } else {
+        setWordOfDay(null);
+      }
+    } catch (err) {
+      console.error("Error fetching word of the day:", err);
+      setWordOfDay(null);
+    } finally {
+      setWordLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchWordOfTheDay();
   }, []);
 
   const handlePredict = async () => {
     if (!text || text.trim().length === 0) return;
-    try {
+    const now = Date.now();
+    if (now - lastCall < 1000) {
+      setRateLimitError('⏳ Please wait a moment before analyzing again.');
+      setTimeout(() => setRateLimitError(''), 2000);
+    return;
+    }
+    setLastCall(now);
+    setRateLimitError('');
+  
+    if (loading) return;
+      try {
       setLoading(true);
       const res = await api.post(`${import.meta.env.VITE_API_URI}/predict`, {
         text: text,
@@ -283,6 +352,7 @@ const analyzeEmojiSentiment = (text) => {
       }
       setResult(res.data.prediction);
       setConfidence(res.data.confidence ?? null);
+      setExplanation(res.data.explanation || null);
       setErrorInfo(null);
     } catch (error) {
       console.error('API Error:', error);
@@ -584,7 +654,7 @@ const analyzeEmojiSentiment = (text) => {
             </div>
 
             {activeTab === "detector" ? (
-              <>
+                <>
                 {/* Enhanced Input Section */}
                 <div className="relative w-full mb-4 group text-left">
                   <textarea
@@ -609,15 +679,25 @@ const analyzeEmojiSentiment = (text) => {
                       ✕
                     </button>
                   )}
-
-                  <div className="flex justify-between items-center mt-1.5 px-1 text-xs font-medium tracking-wide opacity-70">
-                    <span>📖 {calculateReadingTime(text)}</span>
+                  {text && (
+                    <div className="flex flex-wrap justify-between items-center mt-1.5 px-1 text-xs font-medium tracking-wide opacity-70 gap-1">
+                      <div className="flex flex-wrap gap-3">
+                       <span>📖 {calculateReadingTime(text)}</span>
+                      <span>📝 {getTextStats(text).words} words</span>
+                      <span>📏 Avg {getTextStats(text).avgWordLength} chars</span>
+                      <span>📄 {getTextStats(text).sentences} sentences</span>
+                    </div>
                     {text.length > 5000 ? (
-                      <span className="text-red-500 font-bold">{text.length.toLocaleString()} / 5000 characters (Limit exceeded)</span>
+                      <span className="text-red-500 font-bold">
+                        {Math.max(0, text.length).toLocaleString()} / 5000 characters (Limit exceeded)
+                      </span>
                     ) : (
-                      <span className={text.length > 500 ? "text-orange-500" : ""}>{text.length.toLocaleString()} characters</span>
+                      <span className={text.length > 500 ? "text-orange-500" : ""}>
+                        {Math.max(0, text.length).toLocaleString()} characters
+                      </span>
                     )}
-                  </div>
+                  </div>)}
+
                 </div>
 
                 <button
@@ -709,6 +789,26 @@ const analyzeEmojiSentiment = (text) => {
                        {text}
                       </span>
                     </URLPreview>
+
+                    {explanation && result !== "Error" && (
+                    <PredictionExplanation 
+                      explanation={explanation} 
+                      result={result} 
+                      darkMode={isDark} 
+                     />
+                    )}
+
+                    {/* Manipulation Index */}
+                    <ManipulationIndex 
+                      text={text} 
+                      result={result} 
+                      darkMode={isDark} 
+                    />
+                    {rateLimitError && (
+                      <div className="mt-2 p-2 text-sm text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30 dark:text-yellow-400 rounded-lg">
+                      {rateLimitError}
+                    </div>
+                    )}
 
                     {confidence !== null && result !== "Error" && (
                       <>
@@ -819,17 +919,17 @@ const analyzeEmojiSentiment = (text) => {
 
                     <button
                       onClick={() => {
-                        setText("");
-                        setResult("");
-                        setConfidence(null);
-                        setExplanation(null);
-                        setErrorInfo(null);
-                        setType("message");
+                      setText("");
+                      setResult("");
+                      setConfidence(null);
+                      setExplanation(null);
+                      setErrorInfo(null);
+                      setCopied(false);
+                      setType("message");
                       }}
-                      className={`mt-4 w-full py-3.5 rounded-xl font-bold shadow-sm transition-all ${isDark ? activeTheme.btnSecondaryDark : activeTheme.btnSecondary}`}
                     >
-                      Reset
-                    </button>
+  Reset
+</button>
                   </div>
                 )}
 
@@ -847,6 +947,7 @@ const analyzeEmojiSentiment = (text) => {
 
 
                 <FeatureImportance darkMode={isDark} />
+                <CensorshipMode text={text} darkMode={isDark} />
 
                 {/* SPAM WORD OF THE DAY */}
                 {wordOfDay && (
@@ -895,10 +996,10 @@ const analyzeEmojiSentiment = (text) => {
                     <span className="text-sm font-semibold opacity-70">📈 Spam Detection Insights</span>
                     <div className="flex items-center gap-2">
                       {getEarnedBadges().map((badge) => (
-                       <span key={badge.day} className="text-lg" title={badge.name}>
-                        {badge.icon}
-                       </span>
-                    ))}
+                        <span key={badge.day} className="text-lg" title={badge.name}>
+                          {badge.icon}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -965,5 +1066,5 @@ const analyzeEmojiSentiment = (text) => {
       <Chatbot />
     </div>
   );
-
+}
 export default App;

@@ -73,11 +73,11 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      const [summaryRes, trendsRes, breakdownRes] = await Promise.all([
+      const [summaryRes, trendsRes, breakdownRes, meRes] = await Promise.all([
         api.get(`${API_BASE}/analytics/summary`),
         api.get(`${API_BASE}/analytics/trends`, { params: { range: selectedRange } }),
         api.get(`${API_BASE}/analytics/breakdown`),
-        api.get(`${API_BASE}/analytics/me`),
+        api.get("/api/v1/analytics/me"),
       ]);
       setSummary(summaryRes.data);
       const pivoted = pivotTrends(trendsRes.data);

@@ -1,5 +1,10 @@
+const { checkCache, setCache } = require('./middleware/cacheMiddleware');
 const { formatError, errorHandler, errorCodes, classifyMlApiError } = require('./utils/errorHelper');
 require("dotenv").config();
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
 const dns = require("dns");
 const validateEnv = require('./utils/validateEnv');
 validateEnv(); // Validate environment variables
@@ -13,15 +18,22 @@ const compression = require('compression');
 const { v4: uuidv4 } = require('uuid');
 const helmet = require('helmet');
 const axios = require("axios");
-
+// Initialize background jobs
+require('./jobs/archivalCron');
+const { preventCacheStampede } = require('./middleware/cacheMiddleware');
+const healthRoutes = require("./routes/healthRoutes");
+const predictionRoutes = require("./routes/predictionRoutes");
+const emailIntegrationRoutes = require("./routes/emailIntegrationRoutes");
+const imapRoutes = require("./routes/imapRoutes");
+const utilityRoutes = require("./routes/utilityRoutes");
 // ===== STARTUP TIMER =====
 const SERVER_START_TIME = Date.now();
 const startupLogs = [];
 
-const logStartupTime= (component, startTime) => {
+const logStartupTime = (component, startTime) => {
   const elapsed = Date.now() - startTime;
   startupLogs.push({ component, elapsed });
-    console.log(`⏱️ ${component} loaded in ${elapsed}ms`);
+  console.log(`⏱️ ${component} loaded in ${elapsed}ms`);
 };
 
 // Configure global request interceptor to append the internal secret API key
@@ -41,6 +53,7 @@ const mongoose = require("mongoose");
 
 const History = require("./models/History");
 const Rule = require("./models/Rule");
+const User = require("./models/User");
 const { matchKeywordRule } = require("./utils/keywordRules");
 
 const multer = require("multer");
@@ -50,64 +63,73 @@ const FormData = require("form-data");
 
 const app = express();
 
+
+// Apply standard throttling to the heavy ML prediction route
+const { apiLimiter } = require('./middleware/rateLimiter');
+app.use('/predict', apiLimiter);
+
+// Trust the first proxy so express-rate-limit correctly identifies user IPs
+
+
+
 const Sentry = require("@sentry/node");
 
 // ====== SENTRY SETUP ======
 let sentryEnabled = false;
 
 if (process.env.SENTRY_DSN && process.env.SENTRY_DSN !== 'https://your-sentry-dsn@o123456.ingest.sentry.io/1234567') {
-    const Sentry = require("@sentry/node");
-    Sentry.init({
-        dsn: process.env.SENTRY_DSN,
-        environment: process.env.NODE_ENV || "development",
-        tracesSampleRate: 1.0,
-    });
-    app.use(Sentry.Handlers.requestHandler());
-    app.use(Sentry.Handlers.tracingHandler());
-    sentryEnabled = true;
-    console.log('✅ Sentry initialized');
-    
-    // Make Sentry available globally
-    global.Sentry = Sentry;
+  const Sentry = require("@sentry/node");
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    tracesSampleRate: 1.0,
+  });
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+  sentryEnabled = true;
+  console.log('✅ Sentry initialized');
+
+  // Make Sentry available globally
+  global.Sentry = Sentry;
 } else {
-    console.log('ℹ️ Sentry disabled (no valid DSN provided)');
-    // Mock Sentry to prevent errors
-    global.Sentry = {
-        captureException: () => {},
-        setUser: () => {},
-        setTags: () => {},
-        setExtra: () => {},
-    };
+  console.log('ℹ️ Sentry disabled (no valid DSN provided)');
+  // Mock Sentry to prevent errors
+  global.Sentry = {
+    captureException: () => { },
+    setUser: () => { },
+    setTags: () => { },
+    setExtra: () => { },
+  };
 }
 
 // Connect to MongoDB WITH RETRY
-const connectWithRetry = async (retries=5, delay=5000) => {
+const connectWithRetry = async (retries = 5, delay = 5000) => {
   console.log("Attempting to connect to MongoDB...");
   console.log('Max retries:', retries, 'Delay between retries (ms):', delay);
 
-  for(let attempt = 1; attempt <= retries; attempt++) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await mongoose.connect(config.mongodbUri);
-            console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
-            monitorConnectionPool();
-            seedAdminUser();
-            return true;
+      console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
+      monitorConnectionPool();
+      seedAdminUser();
+      return true;
     } catch (err) {
       console.error(`❌ MongoDB connection attempt ${attempt} failed:`, err.message);
-      
+
       if (attempt === retries) {
         console.error("Max retries reached. Exiting process.");
         console.error("Please check your MongoDB connection string and ensure the database is accessible.");
         console.error('1.MongoDB is running');
         console.error('2.MongoDB URI is correct in .env file');
         console.error('   3. Network connectivity\n');
-                process.exit(1);
-            }
-            
-            console.log(`⏳ Waiting ${delay/1000}s before retry...\n`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
+        process.exit(1);
+      }
+
+      console.log(`⏳ Waiting ${delay / 1000}s before retry...\n`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
+  }
 };
 
 //MONGODB CONNECTION POOL MONITORING
@@ -115,7 +137,7 @@ const monitorConnectionPool = () => {
   const timer = setInterval(() => {
     try {
       const pool = mongoose.connection.client.topology.s.pool;
-      if(pool) {
+      if (pool) {
         const size = pool.size || 0;
         const available = pool.availableConnections || 0;
         const used = pool.usedCount || 0;
@@ -124,7 +146,7 @@ const monitorConnectionPool = () => {
         console.debug(`[DB Pool] Size: ${size}, Available: ${available}, Used: ${used} (${usagePercent}%)`);
 
         //Alert if usage exceeds 80%
-        if(usagePercent > 80){
+        if (usagePercent > 80) {
           console.warn(`[DB Pool] ⚠️ High connection pool usage: ${usagePercent.toFixed(2)}%`);
         }
       }
@@ -138,25 +160,25 @@ const monitorConnectionPool = () => {
 
 
 
-if(process.env.NODE_ENV === 'development'){
+if (process.env.NODE_ENV === 'development') {
   //Log all queries in development mode
-  mongoose.set('debug',true);
+  mongoose.set('debug', true);
 } else {
   // Log only slow queries in production mode
   const originalExec = mongoose.Query.prototype.exec;
-  mongoose.Query.prototype.exec = async function() {
+  mongoose.Query.prototype.exec = async function () {
     const start = Date.now();
     const result = await originalExec.apply(this, arguments);
     const duration = Date.now() - start;
 
-    if(duration > 100){ // Log queries taking longer than 100ms
+    if (duration > 100) { // Log queries taking longer than 100ms
       console.log(`🐢 [${new Date().toISOString()}] Slow Query (${duration}ms):`);
       console.log(`   Collection: ${this._collection.collectionName}`);
       console.log(`   Query:`, JSON.stringify(this._conditions));
     }
 
     return result;
-    };
+  };
 }
 
 // Start connection with retry
@@ -169,17 +191,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(helmet());
 app.use(compression());
-app.use(express.json({limit: '1mb'}));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use('/uploads', express.static('uploads'));
-
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
-        message: 'Server is running',
-        limit: '1MB'
-    });
-});
 
 // ===== REQUEST ID MIDDLEWARE =====
 app.use((req, res, next) => {
@@ -198,11 +212,11 @@ app.use((req, res, next) => {
 
   //Log when response is finished
   res.on('finish', () => {
-        const duration = Date.now() - startTime;
-        console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
-    });
-    
-    next();
+    const duration = Date.now() - startTime;
+    console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
+  });
+
+  next();
 });
 
 // Auth routes , History routes
@@ -212,6 +226,12 @@ const analyticsRoutes = require("./routes/analyticsRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const ruleRoutes = require("./routes/ruleRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+
+
+app.use("/", predictionRoutes);
+app.use("/", emailIntegrationRoutes);
+app.use("/", imapRoutes);
+app.use("/", utilityRoutes);
 
 // Versioned routes (v1)
 app.use("/api/v1/auth", authRoutes);
@@ -226,22 +246,11 @@ app.use("/api/auth", authRoutes);
 app.use("/api/history", historyRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/health", healthRoutes);
 app.use("/api/rules", ruleRoutes);
 app.use("/api/reports", reportRoutes);
 
-const { protect } = require("./middleware/authMiddleware");
-const { predictLimiter } = require("./middleware/rateLimiter");
 
-// ===== PREDICTION COUNT =====
-app.get('/api/history/count',protect,async (req,res) => {
-  try{
-    const count = await History.countDocuments({user:req.user.id});
-    res.json({ success:true, count});
-  }catch(error){
-    console.error('Count error:',error.message);
-    res.status(500).json({success: false, error: error.message});
-  }
-  });
 app.get("/", (req, res) => {
   res.send("Node backend running ");
 });
@@ -863,411 +872,6 @@ app.get("/gmail/connect", protect, async (req, res) => {
 });
 
 
-// Protected: Get latest Gmail emails
-app.get("/gmail/emails", protect, async (req, res) => {
-  try {
-    const response = await axios.get(`${ML_API_BASE}/gmail/emails`, {
-      headers: {
-        "X-User-Username": req.user.username,
-      },
-    });
-
-    // Check if the user has a valid refresh token for Gmail
-    if (!userTokens.refresh_token) {
-    return res.status(401).json({
-      error: "Re-authentication required. Please reconnect your Gmail account."
-      });
-    }
-    
-    const response = await axios.get(`${ML_API_BASE}/gmail/emails`, {
-      headers: {
-        "X-User-Username": req.user.username,
-      },
-    });
-    
-    //Check if the user has a valid refresh token for Outlook
-    if (!userTokens.refresh_token) {
-      return res.status(401).json({
-        error: "Re-authentication required. Please reconnect your Outlook account."
-      });
-    }
-    
-    const response = await axios.get(`${ML_API_BASE}/outlook/emails`, {
-      headers: {
-        "X-User-Username": req.user.username,
-      },
-    });
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      const status =
-        error.response.status === 401 ? 400 : error.response.status;
-      return res.status(status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// De-Spamification API
-app.post('/api/despamify', protect, async (req, res) => {
-  try {
-    const { text, tone = 'neutral' } = req.body;
-    
-    if (!text) {
-      return res.status(400).json({ error: 'Text is required' });
-    }
-    
-    // Simple de-spamification logic
-    let deSpammed = text;
-    
-    const replacements = {
-      'URGENT': 'Someone wants to contact you',
-      'FREE': 'There is an offer',
-      'WIN': 'There is a notification',
-      'PRIZE': 'There is a message about rewards',
-      'CLAIM': 'There is a message for you',
-      'CLICK': 'There is a link to visit',
-      'NOW': 'soon',
-      '!!!': '.',
-      '$$$': '',
-      '100%': '',
-      'GUARANTEED': '',
-      'LIMITED TIME': '',
-      'ACT NOW': '',
-      "DON'T MISS": '',
-      'EXCLUSIVE': '',
-      'YOU WON': 'There is a notification'
-    };
-    
-    // Apply tone adjustments
-    const tonePrefixes = {
-      neutral: '',
-      friendly: 'Hi there! ',
-      formal: 'We would like to inform you that ',
-      casual: 'Hey! '
-    };
-    
-    const prefix = tonePrefixes[tone] || '';
-    
-    for (const [key, value] of Object.entries(replacements)) {
-      deSpammed = deSpammed.replace(new RegExp(key, 'gi'), value);
-    }
-    
-    // Clean up
-    deSpammed = deSpammed.replace(/\s+/g, ' ').trim();
-    deSpammed = prefix + deSpammed;
-    
-    if (!deSpammed || deSpammed.length < 5) {
-      deSpammed = 'Someone wants to contact you about an offer.';
-    }
-    
-    res.json({
-      original: text,
-      deSpammedText: deSpammed,
-      tone: tone,
-      success: true
-    });
-    
-  } catch (error) {
-    console.error('De-spamification error:', error);
-    res.status(500).json({ error: 'Failed to de-spamify message' });
-  }
-}); 
-
-// Protected: Get Outlook auth URL
-app.get("/outlook/auth-url", protect, async (req, res) => {
-  try {
-    const response = await axios.get(`${ML_API_BASE}/outlook/auth-url`, {
-      params: req.query,
-      headers: {
-        "X-User-Username": req.user.username,
-      },
-    });
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      return res.status(error.response.status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Public: Handle Outlook OAuth redirect and forward code to frontend
-app.get("/outlook/callback", async (req, res) => {
-  try {
-    const { code } = req.query;
-    if (!code) {
-      return res.status(400).json({ error: "Authorization code is missing" });
-    }
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}/app?provider=outlook&code=${code}`);
-  } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Protected: Exchange Outlook auth code for tokens
-app.get("/outlook/connect", protect, async (req, res) => {
-  try {
-    const { code } = req.query;
-    if (!code) {
-      return res.status(400).json({ error: "Authorization code is missing" });
-    }
-    const response = await axios.get(`${ML_API_BASE}/outlook/callback`, {
-      params: { code },
-      headers: {
-        "X-User-Username": req.user.username,
-      },
-    });
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      return res.status(error.response.status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Protected: Get latest Outlook emails
-app.get("/outlook/emails", protect, async (req, res) => {
-  try {
-    const response = await axios.get(`${ML_API_BASE}/outlook/emails`, {
-      headers: {
-        "X-User-Username": req.user.username,
-      },
-    });
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      const status =
-        error.response.status === 401 ? 400 : error.response.status;
-      return res.status(status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// ========================================
-// PROTECTED ROUTES
-// ========================================
-// Helper: Apply user blacklist/whitelist rules to a list of emails
-async function applyRulesToEmails(userId, emails) {
-  if (!emails || !Array.isArray(emails) || emails.length === 0) {
-    return { emails: emails || [], spamCount: 0, safeCount: 0 };
-  }
-  
-  const rules = await Rule.find({ user: userId }).limit(1000).lean();
-  
-  const blacklist = new Set();
-  const whitelist = new Set();
-  
-  rules.forEach(r => {
-    if (!r.pattern) return;
-    const pattern = r.pattern.toLowerCase().trim();
-    if (r.type === 'blacklist') blacklist.add(pattern);
-    else if (r.type === 'whitelist') whitelist.add(pattern);
-  });
-  
-  let spamCount = 0;
-  let safeCount = 0;
-  
-  const modifiedEmails = emails.map(email => {
-    const sender = (email.sender || "").trim();
-    if (!sender) {
-      const isSpam = email.prediction && email.prediction.toLowerCase() !== 'ham' && email.prediction.toLowerCase() !== 'safe';
-      if (isSpam) spamCount++;
-      else safeCount++;
-      return email;
-    }
-    
-    // Parse sender (could be "John Doe <john@doe.com>" or just "john@doe.com")
-    let emailAddress = sender;
-    const emailMatch = sender.match(/<([^>]+)>/);
-    if (emailMatch) {
-      emailAddress = emailMatch[1];
-    }
-    emailAddress = emailAddress.toLowerCase().trim();
-    
-    const emailParts = emailAddress.split('@');
-    const domain = emailParts.length > 1 ? emailParts[1] : '';
-    
-    const possiblePatterns = [emailAddress];
-    if (domain) {
-      possiblePatterns.push(`@${domain}`);
-      possiblePatterns.push(domain);
-    }
-    
-    let matchedType = null;
-    for (const pattern of possiblePatterns) {
-      if (blacklist.has(pattern)) {
-        matchedType = 'blacklist';
-        break;
-      }
-      if (whitelist.has(pattern)) {
-        matchedType = 'whitelist';
-        break;
-      }
-    }
-    
-    if (matchedType) {
-      const isSpam = matchedType === 'blacklist';
-      const updatedPrediction = isSpam ? 'spam' : 'ham';
-      
-      if (updatedPrediction === 'spam') {
-        spamCount++;
-      } else {
-        safeCount++;
-      }
-      
-      return {
-        ...email,
-        prediction: updatedPrediction,
-        rule_applied: matchingRule.type
-      };
-    }
-    
-    // If no rule matches, keep original prediction
-    const isSpam = email.prediction && email.prediction.toLowerCase() !== 'ham' && email.prediction.toLowerCase() !== 'safe';
-    if (isSpam) {
-      spamCount++;
-    } else {
-      safeCount++;
-    }
-    
-    return email;
-  });
-  
-  return {
-    emails: modifiedEmails,
-    spamCount,
-    safeCount
-  };
-}
-
-// Protected: Scan connected emails
-app.post("/scan-emails", protect, async (req, res) => {
-  try {
-    const { provider } = req.body;
-    if (!provider || (provider !== "gmail" && provider !== "outlook")) {
-      return res
-        .status(400)
-        .json({ error: "Invalid provider. Must be 'gmail' or 'outlook'." });
-    }
-    
-    //Check if the user has a valid refresh token for the specified provider
-    const userTokens = await getUserTokens(req.user.id, provider);
-    if (!userTokens?.refresh_token) {
-      return res.status(401).json({
-        success: false,
-        error: "Re-authentication required",
-        message: `Please reconnect your ${provider} account.`
-      });
-    }
-    const response = await axios.post(
-      `${ML_API_BASE}/scan-emails`,
-      { provider },
-      {
-        headers: {
-          "X-User-Username": req.user.username,
-        },
-      },
-    );
-    const ruleResults = await applyRulesToEmails(req.user.id, response.data.emails);
-    res.json({
-      ...response.data,
-      emails: ruleResults.emails,
-      spam_count: ruleResults.spamCount,
-      safe_count: ruleResults.safeCount
-    });
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      const status =
-        error.response.status === 401 ? 400 : error.response.status;
-      return res.status(status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Protected: IMAP connect
-app.post("/imap/connect", protect, async (req, res) => {
-  try {
-    const { email, password, host, port } = req.body;
-
-    if (!email || !password || !host) {
-      return res.status(400).json({
-        success: false,
-        error: "Email, password, and host are required"
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "IMAP connection configured successfully",
-      data: { email, host, port: port || 993 }
-    });
-  } catch (error) {
-    console.error("IMAP connection error:", error.message);
-    res.status(500).json({
-      success: false,
-      error: "Failed to connect to IMAP server"
-    });
-  }
-});
-
-// ========================================
-// ERROR HANDLERS
-// ========================================
-
-app.use((err, req, res, next) => {
-  if (err.type === 'entity.too.large' || err.message === 'request entity too large') {
-    return res.status(413).json({
-      success: false,
-      error: 'Payload too large. Please reduce the size of your request.',
-      message: 'Request size exceeds 1MB limit.',
-    });
-  }
-  next(err);
-});
-
-app.use(errorHandler);
-
 // ========================================
 // START SERVER
 // ========================================
@@ -1279,284 +883,73 @@ const server = app.listen(PORT, () => {
   console.log(`⏱️ Total startup time: ${totalTime}ms`);
 });
 
-// ====== PREDICTION STATISTICS ======
-app.get('/api/stats', protect, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const total = await History.countDocuments({ user: userId });
-        const spam = await History.countDocuments({ user: userId, prediction: 'spam' });
-        const ham = await History.countDocuments({ user: userId, prediction: 'ham' });
-        
-        const daily = await History.aggregate([
-            { $match: { user: userId } },
-            { $group: { 
-                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, 
-                count: { $sum: 1 } 
-            }},
-            { $sort: { _id: -1 } },
-            { $limit: 7 }
-        ]);
-        
-        const feedbackCount = await History.countDocuments({ 
-            user: userId, 
-            feedback: { $exists: true } 
-        });
-        
-        res.json({
-            success: true,
-            data: {
-                total,
-                spam,
-                ham,
-                spamRatio: total > 0 ? (spam / total) * 100 : 0,
-                daily,
-                feedbackCount
-            }
-        });
-    } catch (error) {
-        console.error('Stats error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
+
+
+
+// ========================================
+// GRACEFUL SHUTDOWN LOGIC
+// ========================================
+
+// 1. Keep track of active connections
+const connections = new Set();
+server.on('connection', (connection) => {
+  connections.add(connection);
+  connection.on('close', () => connections.delete(connection));
 });
 
-// ========================================
-// GRACEFUL SHUTDOWN
-// ========================================
-
+// 2. The Graceful Shutdown Function
 const gracefulShutdown = async (signal) => {
-  console.log(`\nReceived ${signal}. Closing server...`);
-  server.close(async () => {
-    console.log('HTTP server closed.');
-    try {
-      await mongoose.disconnect();
-      console.log('MongoDB connection closed.');
-    } catch (err) {
-      console.error('Error closing MongoDB connection:', err);
+  console.log(`\n🛑 [${signal}] signal received: closing HTTP server...`);
+
+  let forceClosed = false;
+
+  // 15-Second Fallback Timeout
+  const timeoutId = setTimeout(async () => {
+    forceClosed = true;
+    console.error('⚠️ [Timeout] Could not close connections in time, forcefully shutting down!');
+
+    // Destroy all active connections forcefully
+    for (const connection of connections) {
+      connection.destroy();
     }
-    console.log('Shutdown complete. Exiting process.');
-    process.exit(0);
+
+    if (mongoose.connection.readyState === 1) {
+      await mongoose.disconnect();
+    }
+    process.exit(1);
+  }, 15000); // 15 seconds grace period
+
+  // Close server to reject NEW requests
+  server.close(async () => {
+    if (forceClosed) return;
+
+    clearTimeout(timeoutId);
+    console.log('✅ HTTP server closed. All active requests completed normally.');
+
+    try {
+      if (mongoose.connection.readyState === 1) {
+        await mongoose.disconnect();
+        console.log('✅ MongoDB disconnected successfully.');
+      }
+      process.exit(0);
+    } catch (err) {
+      console.error('❌ Error during MongoDB disconnection:', err);
+      process.exit(1);
+    }
   });
+
+  // Safely close idle connections immediately to speed up shutdown
+  if (server.closeIdleConnections) {
+    server.closeIdleConnections();
+  }
 };
 
+// 3. Assign the listeners
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+module.exports = { app };
 
-// Protected: get the current IMAP connection status for the logged-in user
-app.get("/imap/status", protect, async (req, res) => {
-  try {
-    const response = await axios.get(`${ML_API_BASE}/imap/status`, {
-      headers: { "X-User-Username": req.user.username },
-    });
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      return res.status(error.response.status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
 
-//Get activity data for Heatmap
-app.get('/api/activity/:userId', protect, async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const { year, month } = req.query;
 
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const activities = await History.aggregate([
-      {
-        $match: {
-          user: mongoose.Types.ObjectId(userId),
-          createdAt: { $gte: startDate, $lte: endDate }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            day: { $dayOfMonth: "$createdAt" },
-            month: { $month: "$createdAt" },
-          },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
 
-    const result = {};
-   activities.forEach(item => {
-      result[item._id] = item.count;
-    });
-
-    res.json(result);
-  } catch (error) {
-    console.error("Error fetching activity data:", error);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-// Protected: update the scheduled scan interval for the connected IMAP inbox
-app.put("/imap/schedule", protect, async (req, res) => {
-  try {
-    const response = await axios.put(`${ML_API_BASE}/imap/schedule`, req.body, {
-      headers: { "X-User-Username": req.user.username },
-    });
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      return res.status(error.response.status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Protected: revoke IMAP access and delete stored credentials
-app.post("/imap/disconnect", protect, async (req, res) => {
-  try {
-    const response = await axios.post(
-      `${ML_API_BASE}/imap/disconnect`,
-      {},
-      { headers: { "X-User-Username": req.user.username } },
-    );
-    res.json(response.data);
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      return res.status(error.response.status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Protected: trigger an immediate scan of the connected IMAP inbox
-app.post("/imap/scan-now", protect, async (req, res) => {
-  try {
-    const response = await axios.post(
-      `${ML_API_BASE}/imap/scan-now`,
-      {},
-      { headers: { "X-User-Username": req.user.username } },
-    );
-    const ruleResults = await applyRulesToEmails(req.user.id, response.data.emails);
-    res.json({
-      ...response.data,
-      emails: ruleResults.emails,
-      spam_count: ruleResults.spamCount,
-      safe_count: ruleResults.safeCount
-    });
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      const status = error.response.status === 401 ? 400 : error.response.status;
-      return res.status(status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// Protected: get the stored history of scheduled/manual IMAP scan results
-app.get("/imap/scan-results", protect, async (req, res) => {
-  try {
-    const response = await axios.get(`${ML_API_BASE}/imap/scan-results`, {
-      params: req.query,
-      headers: { "X-User-Username": req.user.username },
-    });
-    const ruleResults = await applyRulesToEmails(req.user.id, response.data.results);
-    res.json({
-      ...response.data,
-      results: ruleResults.emails
-    });
-  } catch (error) {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-      console.error("Flask ML API is unavailable:", error.message);
-      return res.status(503).json({
-        error: "Flask ML API is currently unavailable. Please try again later.",
-      });
-    }
-    if (error.response) {
-      return res.status(error.response.status).json(error.response.data);
-    }
-    console.error(error.message);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-// ===== SEARCH HISTORY =====
-app.get('/api/history/search',protect, async(req,res) => {
-  try{
-    const{q,type,startDate,endDate} = req.query;
-    const query = { user: req.user.id};
-
-    // Search by message text
-    if(q && q.trim()){
-           query.query = { $regex: q.trim(), $options: 'i' };
-        }
-
-        // Filter by prediction type
-        if (type && type !== 'all') {
-            query.prediction = type;
-        }
-
-        // Filter by date range
-        if (startDate || endDate) {
-            query.createdAt = {};
-            if (startDate) {
-                query.createdAt.$gte = new Date(startDate);
-            }
-            if (endDate) {
-                query.createdAt.$lte = new Date(endDate);
-            }
-        }
-
-        const results = await History.find(query)
-            .sort({ createdAt: -1 })
-            .limit(100);
-
-        const total = await History.countDocuments(query);
-
-        res.json({
-            success: true,
-            data: results,
-            total,
-            count: results.length
-        });
-    } catch (error) {
-        console.error('Search error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-module.exports = { app, applyRulesToEmails };
- 
