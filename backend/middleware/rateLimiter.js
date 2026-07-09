@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const RedisStore = require('rate-limit-redis');
 const redis = require('redis');
 
@@ -56,13 +57,17 @@ const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 attempts per window
   store: store,
-  message: { 
-    success: false, 
-    message: 'Too many login attempts from this IP, please try again after 15 minutes.' 
+  message: {
+    success: false,
+    message: 'Too many login attempts from this IP, please try again after 15 minutes.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true, // Don't count successful logins
+  keyGenerator: (req) => {
+    // Rate limit by email or IP
+    return req.body.email || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
 });
 
 /**
@@ -73,9 +78,9 @@ const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 registrations per window
   store: store,
-  message: { 
-    success: false, 
-    message: 'Too many registration attempts from this IP, please try again after 15 minutes.' 
+  message: {
+    success: false,
+    message: 'Too many registration attempts from this IP, please try again after 15 minutes.'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -89,15 +94,15 @@ const resetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 3, // 3 reset requests per window
   store: store,
-  message: { 
-    success: false, 
-    message: 'Too many password reset requests, please try again later.' 
+  message: {
+    success: false,
+    message: 'Too many password reset requests, please try again later.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Rate limit by email or IP
-    return req.body.email || req.ip || req.connection.remoteAddress;
+    return req.body.email || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
 });
 
@@ -109,9 +114,9 @@ const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // 100 requests per window
   store: store,
-  message: { 
-    success: false, 
-    message: 'Too many API requests from this IP, please try again after 15 minutes.' 
+  message: {
+    success: false,
+    message: 'Too many API requests from this IP, please try again after 15 minutes.'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -129,15 +134,15 @@ const chatLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 15, // 15 messages per minute
   store: store,
-  message: { 
-    success: false, 
-    error: "Too many chat requests. Please slow down." 
+  message: {
+    success: false,
+    error: "Too many chat requests. Please slow down."
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Rate limit by user ID if authenticated, otherwise by IP
-    return req.user?.id || req.ip || req.connection.remoteAddress;
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
 });
 
@@ -145,8 +150,15 @@ const chatLimiter = rateLimit({
  * Predict Rate Limiter
  * Prevents abuse of ML prediction endpoint
  */
-const PREDICT_WINDOW_MS = Number(process.env.PREDICT_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
-const PREDICT_MAX = Number(process.env.PREDICT_RATE_LIMIT_MAX) || 30;
+const PREDICT_WINDOW_MS =
+  Number(process.env.RATE_LIMIT_WINDOW_MS) ||
+  Number(process.env.PREDICT_RATE_LIMIT_WINDOW_MS) ||
+  15 * 60 * 1000;
+
+const PREDICT_MAX =
+  Number(process.env.RATE_LIMIT_MAX) ||
+  Number(process.env.PREDICT_RATE_LIMIT_MAX) ||
+  100;
 
 const predictLimiter = rateLimit({
   windowMs: PREDICT_WINDOW_MS,
@@ -156,13 +168,16 @@ const predictLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Rate limit by user ID if authenticated, otherwise by IP
-    return req.user?.id || req.ip || req.connection.remoteAddress;
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
   handler: (req, res, next, options) => {
     const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
-    res.status(429).json({
+
+    res.setHeader("Retry-After", retryAfterSeconds);
+
+    res.status(options.statusCode).json({
       success: false,
-      error: "Too many predict requests. Please slow down.",
+      error: "Too many prediction requests. Please try again later.",
       retryAfter: retryAfterSeconds,
       limit: options.max,
       remaining: 0,
@@ -184,7 +199,7 @@ const otpLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
   max: 3, // Only 3 OTP requests per 5 minutes
   store: store,
-  message: { 
+  message: {
     success: false,
     error: 'Too many OTP requests. Please wait 5 minutes.',
     retryAfter: 5 * 60 // 5 minutes in seconds
@@ -193,7 +208,7 @@ const otpLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Rate limit by email or phone or IP
-    return req.body.email || req.body.phone || req.ip || req.connection.remoteAddress;
+    return req.body.email || req.body.phone || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
   handler: (req, res, next, options) => {
     const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
@@ -216,15 +231,15 @@ const verificationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // Max 5 verification attempts
   store: store,
-  message: { 
+  message: {
     success: false,
-    error: 'Too many verification attempts. Please try again later.' 
+    error: 'Too many verification attempts. Please try again later.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
     // Rate limit by email, phone, or IP
-    return req.body.email || req.body.phone || req.ip || req.connection.remoteAddress;
+    return req.body.email || req.body.phone || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
   skipSuccessfulRequests: true, // Don't count successful verifications
   handler: (req, res, next, options) => {
@@ -235,6 +250,7 @@ const verificationLimiter = rateLimit({
       retryAfter: retryAfterSeconds,
       limit: options.max,
       remaining: 0
+
     });
   }
 });
@@ -247,14 +263,14 @@ const bulkPredictLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 10, // Max 10 bulk predictions per hour
   store: store,
-  message: { 
+  message: {
     success: false,
-    error: 'Too many bulk prediction requests. Please wait 1 hour.' 
+    error: 'Too many bulk prediction requests. Please wait 1 hour.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.user?.id || req.ip || req.connection.remoteAddress;
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
 });
 
@@ -266,14 +282,14 @@ const exportLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5, // Max 5 exports per hour
   store: store,
-  message: { 
+  message: {
     success: false,
-    error: 'Too many export requests. Please wait 1 hour.' 
+    error: 'Too many export requests. Please wait 1 hour.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.user?.id || req.ip || req.connection.remoteAddress;
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
 });
 
@@ -285,14 +301,14 @@ const feedbackLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10, // Max 10 feedback submissions per minute
   store: store,
-  message: { 
+  message: {
     success: false,
-    error: 'Too many feedback submissions. Please slow down.' 
+    error: 'Too many feedback submissions. Please slow down.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.user?.id || req.ip || req.connection.remoteAddress;
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
   },
 });
 
@@ -330,27 +346,353 @@ module.exports = {
   registerLimiter,
   resetLimiter,
   apiLimiter,
-  
+
   // Feature limiters
   chatLimiter,
   predictLimiter,
   bulkPredictLimiter,
   exportLimiter,
   feedbackLimiter,
-  
+  const rateLimit = require('express-rate-limit');
+  const { ipKeyGenerator } = require('express-rate-limit');
+  const RedisStore = require('rate-limit-redis');
+  const redis = require('redis');
+
+  // ============================================
+  // REDIS CONFIGURATION (Optional but recommended)
+  // ============================================
+  let redisClient = null;
+  let store = undefined;
+
+  // Try to connect to Redis if configured
+  if(process.env.REDIS_URL) {
+  try {
+    redisClient = redis.createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        reconnectStrategy: (retries) => {
+          if (retries > 10) {
+            console.warn('⚠️  Redis connection failed, falling back to memory store');
+            return false;
+          }
+          return Math.min(retries * 100, 3000);
+        }
+      }
+    });
+
+    redisClient.on('error', (err) => {
+      console.warn('⚠️  Redis error:', err.message);
+      store = undefined;
+    });
+
+    redisClient.connect().then(() => {
+      console.log('✅ Redis connected for rate limiting');
+      store = new RedisStore({
+        sendCommand: (...args) => redisClient.sendCommand(args),
+      });
+    }).catch(() => {
+      console.warn('⚠️  Redis connection failed, using memory store');
+      store = undefined;
+    });
+  } catch (error) {
+    console.warn('⚠️  Redis not available, using memory store');
+    store = undefined;
+  }
+}
+
+// ============================================
+// 1. STRICT AUTH LIMITERS (Your Existing Code)
+// ============================================
+
+/**
+ * Login Rate Limiter
+ * Limits login attempts to prevent brute force attacks
+ */
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window
+  store: store,
+  message: {
+    success: false,
+    message: 'Too many login attempts from this IP, please try again after 15 minutes.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful logins
+  keyGenerator: (req) => {
+    // Rate limit by email or IP
+    return req.body.email || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+});
+
+/**
+ * Registration Rate Limiter
+ * Prevents mass account creation
+ */
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 registrations per window
+  store: store,
+  message: {
+    success: false,
+    message: 'Too many registration attempts from this IP, please try again after 15 minutes.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Password Reset Rate Limiter
+ * Prevents abuse of password reset functionality
+ */
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // 3 reset requests per window
+  store: store,
+  message: {
+    success: false,
+    message: 'Too many password reset requests, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit by email or IP
+    return req.body.email || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+});
+
+/**
+ * General API Rate Limiter
+ * Prevents API abuse and DoS attacks
+ */
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requests per window
+  store: store,
+  message: {
+    success: false,
+    message: 'Too many API requests from this IP, please try again after 15 minutes.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ============================================
+// 2. MAINTAINER'S LIMITERS (Incoming Code)
+// ============================================
+
+/**
+ * Chat Rate Limiter
+ * Prevents spam in chat endpoints
+ */
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 15, // 15 messages per minute
+  store: store,
+  message: {
+    success: false,
+    error: "Too many chat requests. Please slow down."
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit by user ID if authenticated, otherwise by IP
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+});
+
+/**
+ * Predict Rate Limiter
+ * Prevents abuse of ML prediction endpoint
+ */
+const PREDICT_WINDOW_MS =
+  Number(process.env.RATE_LIMIT_WINDOW_MS) ||
+  Number(process.env.PREDICT_RATE_LIMIT_WINDOW_MS) ||
+  15 * 60 * 1000;
+
+const PREDICT_MAX =
+  Number(process.env.RATE_LIMIT_MAX) ||
+  Number(process.env.PREDICT_RATE_LIMIT_MAX) ||
+  100;
+
+const predictLimiter = rateLimit({
+  windowMs: PREDICT_WINDOW_MS,
+  max: PREDICT_MAX,
+  store: store,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit by user ID if authenticated, otherwise by IP
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+  handler: (req, res, next, options) => {
+    const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
+
+    res.setHeader("Retry-After", retryAfterSeconds);
+
+    res.status(options.statusCode).json({
+      success: false,
+      error: "Too many prediction requests. Please try again later.",
+      retryAfter: retryAfterSeconds,
+      limit: options.max,
+      remaining: 0,
+      resetTime: new Date(Date.now() + options.windowMs).toISOString()
+    });
+  }
+});
+
+// ============================================
+// 3. OTP & VERIFICATION LIMITERS (NEW)
+// ============================================
+
+/**
+ * OTP Request Rate Limiter
+ * Prevents SMS/Email bombing attacks
+ * Stricter limits for security
+ */
+const otpLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 3, // Only 3 OTP requests per 5 minutes
+  store: store,
+  message: {
+    success: false,
+    error: 'Too many OTP requests. Please wait 5 minutes.',
+    retryAfter: 5 * 60 // 5 minutes in seconds
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit by email or phone or IP
+    return req.body.email || req.body.phone || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+  handler: (req, res, next, options) => {
+    const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
+    res.status(429).json({
+      success: false,
+      error: 'Rate limit exceeded. Maximum 3 OTP requests per 5 minutes.',
+      retryAfter: retryAfterSeconds,
+      limit: options.max,
+      remaining: 0,
+      resetTime: new Date(Date.now() + options.windowMs).toISOString()
+    });
+  }
+});
+
+/**
+ * OTP Verification Rate Limiter
+ * Prevents brute force OTP attempts
+ */
+const verificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Max 5 verification attempts
+  store: store,
+  message: {
+    success: false,
+    error: 'Too many verification attempts. Please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit by email, phone, or IP
+    return req.body.email || req.body.phone || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+  skipSuccessfulRequests: true, // Don't count successful verifications
+  handler: (req, res, next, options) => {
+    const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
+    res.status(429).json({
+      success: false,
+      error: 'Too many verification attempts. Please try again in 15 minutes.',
+      retryAfter: retryAfterSeconds,
+      limit: options.max,
+      remaining: 0
+
+    });
+  }
+});
+
+/**
+ * Bulk Predict Rate Limiter
+ * Prevents abuse of bulk prediction endpoint
+ */
+const bulkPredictLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // Max 10 bulk predictions per hour
+  store: store,
+  message: {
+    success: false,
+    error: 'Too many bulk prediction requests. Please wait 1 hour.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+});
+
+/**
+ * Export Rate Limiter
+ * Prevents abuse of data export endpoints
+ */
+const exportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // Max 5 exports per hour
+  store: store,
+  message: {
+    success: false,
+    error: 'Too many export requests. Please wait 1 hour.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+});
+
+/**
+ * Feedback Rate Limiter
+ * Prevents spam feedback submissions
+ */
+const feedbackLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // Max 10 feedback submissions per minute
+  store: store,
+  message: {
+    success: false,
+    error: 'Too many feedback submissions. Please slow down.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.user?.id || ipKeyGenerator(req.ip || req.connection.remoteAddress);
+  },
+});
+
+// ============================================
+// 5. EXPORT ALL LIMITERS
+// ============================================
+
+module.exports = {
+  // Auth limiters
+  loginLimiter,
+  registerLimiter,
+  resetLimiter,
+  apiLimiter,
+
+  // Feature limiters
+  chatLimiter,
+  predictLimiter,
+  bulkPredictLimiter,
+  exportLimiter,
+  feedbackLimiter,
+
   // OTP limiters
   otpLimiter,
   verificationLimiter,
-  
+
   // Configuration values
   PREDICT_MAX,
   PREDICT_WINDOW_MS,
-  
+
   // Redis client (for external use)
-  redisClient,
-  
-  // Utility functions
-  isProduction,
-  isDevelopment,
-  getLimiterConfig
+  redisClient
 };

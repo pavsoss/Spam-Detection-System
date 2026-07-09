@@ -17,18 +17,27 @@ from flask_cors import CORS
 import sys
 from filelock import FileLock
 import requests
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 from routes.analytics import analytics_bp
 from routes.analytics import record_scan
 from flask_limiter import Limiter
 from flask_limiter.errors import RateLimitExceeded
 from flask_limiter.util import get_remote_address
+from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
+from outlook_connector import get_outlook_auth_url, get_outlook_tokens, refresh_outlook_token, fetch_outlook_emails
+from email_scanner import scan_emails_with_model
+import imap_connector
+import imap_store
+import oauth_store
+from crypto_utils import encrypt_secret, decrypt_secret, CredentialEncryptionError
+from apscheduler.schedulers.background import BackgroundScheduler
 
 
 # Try to import NLTK for stopwords (optional)
 try:
-    import nltk
-    from nltk.corpus import stopwords
-    from nltk.tokenize import word_tokenize
+    
     # Do NOT download NLTK corpora at runtime. In restricted / read-only
     # containers this can crash the app on startup with PermissionError.
     # Ensure required corpora (punkt, stopwords) are installed during Docker
@@ -39,13 +48,7 @@ except ImportError:
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "email_connectors"))
-from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
-from outlook_connector import get_outlook_auth_url, get_outlook_tokens, refresh_outlook_token, fetch_outlook_emails
-from email_scanner import scan_emails_with_model
-import imap_connector
-import imap_store
-from crypto_utils import encrypt_secret, decrypt_secret, CredentialEncryptionError
-from apscheduler.schedulers.background import BackgroundScheduler
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -183,9 +186,146 @@ label_encoder = joblib.load(LABEL_ENCODER_PATH)
 from xai_service import XAIService
 xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label_encoder)
 
-# In-memory storage for spam words (for demo purposes)
-# In production, use a database
-spam_words_storage = {}
+# SQLite Persistent Storage for spam words
+import sqlite3
+from datetime import datetime, timezone
+
+def _db_connection():
+    conn = sqlite3.connect(imap_store.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_spam_words_db():
+    with _db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spam_word_frequencies (
+                word TEXT NOT NULL,
+                day TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (word, day)
+            )
+            """
+        )
+        conn.commit()
+
+def increment_spam_word_frequency(word):
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO spam_word_frequencies (word, day, count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(word, day) DO UPDATE SET count = count + 1
+            """,
+            (word, day)
+        )
+        conn.commit()
+
+def get_db_wordcloud_data():
+    with _db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT word, SUM(count) as total_count
+            FROM spam_word_frequencies
+            GROUP BY word
+            ORDER BY total_count DESC
+            LIMIT 50
+            """
+        ).fetchall()
+        return [{"word": row["word"], "count": row["total_count"]} for row in rows]
+
+SPAM_WORD_METADATA = {
+    "free": {
+        "definition": "Offered without cost or payment, frequently used in spam messages to lure users into clicking links.",
+        "context": "Get FREE access now! No credit card required.",
+        "tips": "Be highly skeptical of 'free' offers; they are often bait for phishing, subscriptions, or malware."
+    },
+    "win": {
+        "definition": "Be successful or victorious in a contest or raffle, typically fake in spam/phishing messages.",
+        "context": "You have won a $1000 Walmart Gift Card! Claim here.",
+        "tips": "If you didn't enter a contest, you didn't win anything. Never enter personal details to claim a 'prize'."
+    },
+    "urgent": {
+        "definition": "Requiring immediate action or attention, used to induce panic and quick, unthinking decisions.",
+        "context": "URGENT: Your account has been compromised. Verify your details within 24 hours.",
+        "tips": "Phishers use artificial urgency to make you act before you think. Verify independently with the service."
+    },
+    "prize": {
+        "definition": "An award given to the winner of a competition, often used as bait in promotional spam.",
+        "context": "Your special prize is waiting! Click here to claim.",
+        "tips": "Legitimate organizations don't send SMS/emails with sketchy links to claim randomly awarded prizes."
+    },
+    "cash": {
+        "definition": "Money in coins or notes, commonly promised in financial spam and advance-fee fraud schemes.",
+        "context": "Earn quick cash from home! Make $500/day.",
+        "tips": "Beware of 'get rich quick' or easy work-from-home offers. They are often scams or money-laundering operations."
+    },
+    "offer": {
+        "definition": "A proposal or bid, frequently restricted in time to force immediate response.",
+        "context": "Exclusive limited time offer: Save 90% on this software.",
+        "tips": "Always check the domain of the offer. Avoid clicking promotional links from unknown senders."
+    },
+    "guaranteed": {
+        "definition": "Formally assured, commonly used in deceptive promises of loans, earnings, or cures.",
+        "context": "Guaranteed approval for home loans up to $50,000.",
+        "tips": "No financial service can guarantee approval without screening. This is a common trap for upfront fees."
+    },
+    "click": {
+        "definition": "Press a link or button, directing users to external phishing or credential harvesting pages.",
+        "context": "Click this link to restore access to your banking portal.",
+        "tips": "Never click direct links in unexpected emails/texts requesting login credentials. Go to the site manually."
+    }
+}
+
+def get_word_of_the_day_data():
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    word_row = None
+    with _db_connection() as conn:
+        word_row = conn.execute(
+            """
+            SELECT word, SUM(count) as total_count
+            FROM spam_word_frequencies
+            WHERE day = ?
+            GROUP BY word
+            ORDER BY total_count DESC
+            LIMIT 1
+            """,
+            (day,)
+        ).fetchone()
+        
+        if not word_row:
+            word_row = conn.execute(
+                """
+                SELECT word, SUM(count) as total_count
+                FROM spam_word_frequencies
+                GROUP BY word
+                ORDER BY total_count DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            
+    if word_row:
+        word = word_row["word"]
+        count = word_row["total_count"]
+    else:
+        word = "free"
+        count = 0
+        
+    metadata = SPAM_WORD_METADATA.get(word, {
+        "definition": "A keyword commonly appearing in unsolicited messages, flagged by the system as a potential spam indicator.",
+        "context": f"Important notification: Please review this {word}.",
+        "tips": f"Treat messages containing '{word}' with caution. Verify the sender's identity and watch out for unsolicited requests."
+    })
+    
+    return {
+        "word": word,
+        "count": count if count > 0 else None,
+        "definition": metadata["definition"],
+        "context": metadata["context"],
+        "tips": metadata["tips"]
+    }
+
 app.model = model
 app.vectorizer = vectorizer
 app.label_encoder = label_encoder
@@ -197,7 +337,7 @@ app.register_blueprint(analytics_bp)
 url_model = joblib.load(URL_MODEL_PATH)
 url_vectorizer = joblib.load(URL_VECTORIZER_PATH)
 # url_detector.pkl predicts numeric classes with no bundled label encoder
-URL_LABELS = {0: "malicious", 1: "safe"}
+URL_LABELS = {0: "safe", 1: "malicious"}
 
 # Heuristic checks to catch obviously malicious URL patterns that the
 # model is too biased toward "safe" to flag on its own.
@@ -269,9 +409,44 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def make_prediction_response(
+    input_text,
+    result,
+    confidence_score,
+    decision_score,
+    confidence_level,
+    detected_language="en",
+    translated=False,
+    translated_text=None,
+    domain_analysis=None,
+    explanation=None
+):
+    """Enforces a strict standardized response schema for all predictions."""
+    response = {
+        "input": input_text,
+        "result": result,
+        "prediction": result,
+        "confidence": round(float(confidence_score) / 100.0, 4) if confidence_score is not None else 0.0,
+        "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
+        "decision_score": float(decision_score) if decision_score is not None else None,
+        "confidence_level": confidence_level,
+        "detected_language": detected_language,
+        "translated": translated
+    }
+    if translated and translated_text:
+        response["translated_text"] = translated_text
+    if domain_analysis is not None:
+        response["domain_analysis"] = domain_analysis
+    if explanation is not None:
+        response["explanation"] = explanation
+    return response
+
+
 @app.route("/predict", methods=["POST"])
 @limiter.limit(PREDICT_RATE_LIMIT)
 def predict():
+    # Initialize final_output to prevent NameError/UnboundLocalError in case of early/conditional references
+    final_output = None
 
     try:
         data = request.get_json(silent=True)
@@ -399,7 +574,10 @@ def predict():
         if final_output == "spam":
             words = extract_words(text)
             for word in words:
-                spam_words_storage[word] = spam_words_storage.get(word, 0) + 1
+                try:
+                    increment_spam_word_frequency(word)
+                except Exception as e:
+                    print(f"[db-wordcloud] failed to increment word '{word}': {e}")
 
        # Log prediction with Trace ID
         # Record the scan now that the prediction label is known.
@@ -414,21 +592,19 @@ def predict():
         # Generate XAI explanation for the input text
         explanation = xai_engine.analyze(text, input_type=input_type)
 
-        # Return response with domain analysis and explanation
-        response_data = {
-            "input": original_text,
-            "result": final_output,
-            "prediction": final_output,
-            "domain_analysis": domain_analysis,
-            "explanation": explanation,
-            "detected_language": detected_language,
-            "translated": translated,
-        }
-        if translated:
-            response_data["translated_text"] = text
-        response_data["confidence_score"] = confidence_score
-        response_data["decision_score"] = decision_score
-        response_data["confidence_level"] = confidence_level
+        # Return response using helper
+        response_data = make_prediction_response(
+            input_text=original_text,
+            result=final_output,
+            confidence_score=confidence_score,
+            decision_score=decision_score,
+            confidence_level=confidence_level,
+            detected_language=detected_language,
+            translated=translated,
+            translated_text=text if translated else None,
+            domain_analysis=domain_analysis,
+            explanation=explanation
+        )
 
         return jsonify(response_data)
 
@@ -458,12 +634,13 @@ def extract_words(text):
 
 
 def get_wordcloud_data():
-    """Return stored spam word frequencies."""
-    if spam_words_storage:
-        # Sort by frequency and return top 50
-        sorted_words = sorted(spam_words_storage.items(), key=lambda x: x[1], reverse=True)
-        return [{"word": w, "count": c} for w, c in sorted_words[:50]]
-    return None
+    """Return stored spam word frequencies from database."""
+    try:
+        data = get_db_wordcloud_data()
+        return data if data else None
+    except Exception as e:
+        print(f"[db-wordcloud] failed to get wordcloud data: {e}")
+        return None
 
 
 # Common spam words (fallback sample data)
@@ -502,6 +679,24 @@ def get_wordcloud():
             "source": "sample"
         })
         
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/word-of-the-day', methods=['GET'])
+def get_word_of_the_day():
+    """
+    Get the spam word of the day with metadata (definition, context, safety tips).
+    """
+    try:
+        word_data = get_word_of_the_day_data()
+        return jsonify({
+            "success": True,
+            "data": word_data
+        })
     except Exception as e:
         return jsonify({
             "success": False,
@@ -607,8 +802,6 @@ def get_insights():
         return jsonify({"error": str(e)}), 500
 
 
-TOKEN_STORE = {}
-
 @app.route("/gmail/auth-url", methods=["GET"])
 def gmail_auth_url():
     redirect_uri = request.args.get("redirect_uri") or "http://localhost:3000/gmail/callback"
@@ -628,9 +821,7 @@ def gmail_callback():
         
     try:
         tokens = get_gmail_tokens(code, redirect_uri)
-        if username not in TOKEN_STORE:
-            TOKEN_STORE[username] = {}
-        TOKEN_STORE[username]["gmail"] = tokens
+        oauth_store.save_oauth_tokens(username, "gmail", tokens)
         return jsonify({"message": "Gmail connected successfully"})
     except Exception as e:
         return jsonify({"error": f"Failed to exchange Google code: {str(e)}"}), 500
@@ -641,7 +832,7 @@ def gmail_emails():
     username = _require_username()
     if not username:
         return jsonify({"error": "Missing X-User-Username header"}), 401
-    user_tokens = TOKEN_STORE.get(username, {}).get("gmail")
+    user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
     
     if not user_tokens:
         return jsonify({"error": "Gmail account not connected"}), 401
@@ -651,11 +842,13 @@ def gmail_emails():
             emails = fetch_gmail_emails(user_tokens.get("access_token"), limit=50)
         except requests.exceptions.HTTPError as err:
             if err.response.status_code == 401 and user_tokens.get("refresh_token"):
-                new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
-                user_tokens["access_token"] = new_tokens["access_token"]
-                if "refresh_token" in new_tokens:
-                    user_tokens["refresh_token"] = new_tokens["refresh_token"]
-                emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                try:
+                    new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
+                    oauth_store.save_oauth_tokens(username, "gmail", new_tokens)
+                    user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
+                    emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                except Exception as refresh_err:
+                    raise refresh_err
             else:
                 raise err
         return jsonify({"emails": emails})
@@ -681,9 +874,7 @@ def outlook_callback():
         
     try:
         tokens = get_outlook_tokens(code, redirect_uri)
-        if username not in TOKEN_STORE:
-            TOKEN_STORE[username] = {}
-        TOKEN_STORE[username]["outlook"] = tokens
+        oauth_store.save_oauth_tokens(username, "outlook", tokens)
         return jsonify({"message": "Outlook connected successfully"})
     except Exception as e:
         return jsonify({"error": f"Failed to exchange Outlook code: {str(e)}"}), 500
@@ -694,7 +885,7 @@ def outlook_emails():
     username = _require_username()
     if not username:
         return jsonify({"error": "Missing X-User-Username header"}), 401
-    user_tokens = TOKEN_STORE.get(username, {}).get("outlook")
+    user_tokens = oauth_store.get_oauth_tokens(username, "outlook")
     
     if not user_tokens:
         return jsonify({"error": "Outlook account not connected"}), 401
@@ -704,11 +895,13 @@ def outlook_emails():
             emails = fetch_outlook_emails(user_tokens.get("access_token"), limit=50)
         except requests.exceptions.HTTPError as err:
             if err.response.status_code == 401 and user_tokens.get("refresh_token"):
-                new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
-                user_tokens["access_token"] = new_tokens["access_token"]
-                if "refresh_token" in new_tokens:
-                    user_tokens["refresh_token"] = new_tokens["refresh_token"]
-                emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                try:
+                    new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
+                    oauth_store.save_oauth_tokens(username, "outlook", new_tokens)
+                    user_tokens = oauth_store.get_oauth_tokens(username, "outlook")
+                    emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                except Exception as refresh_err:
+                    raise refresh_err
             else:
                 raise err
         return jsonify({"emails": emails})
@@ -727,7 +920,7 @@ def scan_emails_route():
     if provider not in ("gmail", "outlook"):
         return jsonify({"error": "Invalid provider. Must be 'gmail' or 'outlook'."}), 400
         
-    user_tokens = TOKEN_STORE.get(username, {}).get(provider)
+    user_tokens = oauth_store.get_oauth_tokens(username, provider)
     if not user_tokens:
         return jsonify({"error": f"{provider.capitalize()} account not connected."}), 401
         
@@ -737,9 +930,13 @@ def scan_emails_route():
                 emails = fetch_gmail_emails(user_tokens.get("access_token"), limit=50)
             except requests.exceptions.HTTPError as err:
                 if err.response.status_code == 401 and user_tokens.get("refresh_token"):
-                    new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
-                    user_tokens["access_token"] = new_tokens["access_token"]
-                    emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                    try:
+                        new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
+                        oauth_store.save_oauth_tokens(username, "gmail", new_tokens)
+                        user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
+                        emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                    except Exception as refresh_err:
+                        raise refresh_err
                 else:
                     raise err
         else:
@@ -747,9 +944,13 @@ def scan_emails_route():
                 emails = fetch_outlook_emails(user_tokens.get("access_token"), limit=50)
             except requests.exceptions.HTTPError as err:
                 if err.response.status_code == 401 and user_tokens.get("refresh_token"):
-                    new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
-                    user_tokens["access_token"] = new_tokens["access_token"]
-                    emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                    try:
+                        new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
+                        oauth_store.save_oauth_tokens(username, "outlook", new_tokens)
+                        user_tokens = oauth_store.get_oauth_tokens(username, "outlook")
+                        emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                    except Exception as refresh_err:
+                        raise refresh_err
                 else:
                     raise err
                     
@@ -760,8 +961,66 @@ def scan_emails_route():
 
 
 imap_store.init_db()
+oauth_store.init_db()
 scheduler = BackgroundScheduler()
 scheduler.start()
+
+
+def _refresh_oauth_tokens():
+    """Runs inside the scheduler thread: refreshes OAuth tokens close to expiration."""
+    try:
+        expiring = oauth_store.get_expiring_oauth_tokens(threshold_minutes=10)
+    except Exception as e:
+        print(f"[oauth-refresh] failed to fetch expiring tokens: {e}")
+        return
+
+    for token_entry in expiring:
+        username = token_entry["username"]
+        provider = token_entry["provider"]
+        refresh_token = token_entry["refresh_token"]
+
+        if not refresh_token:
+            print(f"[oauth-refresh] No refresh token for {username} ({provider})")
+            continue
+
+        try:
+            if provider == "gmail":
+                new_tokens = refresh_gmail_token(refresh_token)
+            elif provider == "outlook":
+                new_tokens = refresh_outlook_token(refresh_token)
+            else:
+                continue
+
+            oauth_store.save_oauth_tokens(username, provider, new_tokens)
+            print(f"[oauth-refresh] successfully refreshed token for {username} ({provider})")
+        except requests.exceptions.HTTPError as err:
+            is_auth_error = False
+            try:
+                if err.response is not None:
+                    if err.response.status_code in (400, 401):
+                        err_json = err.response.json()
+                        err_desc = err_json.get("error", "")
+                        if "invalid_grant" in err_desc or err_json.get("error_description", ""):
+                            is_auth_error = True
+            except Exception:
+                pass
+
+            if is_auth_error or (err.response is not None and err.response.status_code == 400):
+                print(f"[oauth-refresh] Token revoked/invalid for {username} ({provider}). Deleting from DB.")
+                oauth_store.delete_oauth_tokens(username, provider)
+            else:
+                print(f"[oauth-refresh] Temporary HTTP error refreshing token for {username} ({provider}): {err}")
+        except Exception as e:
+            print(f"[oauth-refresh] failed to refresh token for {username} ({provider}): {e}")
+
+
+scheduler.add_job(
+    _refresh_oauth_tokens,
+    "interval",
+    minutes=5,
+    id="oauth_token_refresh",
+    replace_existing=True,
+)
 
 
 def _run_imap_scan(username):

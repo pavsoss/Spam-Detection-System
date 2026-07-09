@@ -17,17 +17,36 @@ const HistoryArchive = require('../models/HistoryArchive');
         const ninetyDaysAgo = new Date();
         ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
-        // 1. Find all records older than 90 days
-        const oldRecords = await History.find({ createdAt: { $lt: ninetyDaysAgo } }).session(session);
+        // 1. Process records in batches to prevent OOM
+        let processedCount = 0;
+        while (true) {
+            const batch = await History.find({ createdAt: { $lt: ninetyDaysAgo } })
+                                       .limit(1000)
+                                       .session(session);
+            
+            if (batch.length === 0) break;
+            
+            // Map the old records to the new schema
+            const mappedRecords = batch.map(record => ({
+                userId: record.user,
+                message: record.query,
+                prediction: record.prediction,
+                confidenceScore: record.confidence,
+                createdAt: record.createdAt
+            }));
 
-        if (oldRecords.length > 0) {
             // 2. Bulk insert them into the Archive collection
-            await HistoryArchive.insertMany(oldRecords, { session });
+            await HistoryArchive.insertMany(mappedRecords, { session });
             
             // 3. Bulk delete them from the main History collection
-            await History.deleteMany({ createdAt: { $lt: ninetyDaysAgo } }, { session });
+            const batchIds = batch.map(doc => doc._id);
+            await History.deleteMany({ _id: { $in: batchIds } }, { session });
             
-            console.log(`✅ [Cron] Successfully archived ${oldRecords.length} records.`);
+            processedCount += batch.length;
+        }
+
+        if (processedCount > 0) {
+            console.log(`✅ [Cron] Successfully archived ${processedCount} records.`);
         } else {
             console.log('ℹ️ [Cron] No old records to archive today.');
         }
