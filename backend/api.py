@@ -17,31 +17,44 @@ from flask_cors import CORS
 import sys
 from filelock import FileLock
 import requests
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 from routes.analytics import analytics_bp
 from routes.analytics import record_scan
 from flask_limiter import Limiter
 from flask_limiter.errors import RateLimitExceeded
 from flask_limiter.util import get_remote_address
+from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
+from outlook_connector import get_outlook_auth_url, get_outlook_tokens, refresh_outlook_token, fetch_outlook_emails
+from email_scanner import scan_emails_with_model
+import imap_connector
+import imap_store
+import oauth_store
+from crypto_utils import encrypt_secret, decrypt_secret, CredentialEncryptionError
+from apscheduler.schedulers.background import BackgroundScheduler
 
 
 # Try to import NLTK for stopwords (optional)
 try:
+
     import nltk
     from nltk.corpus import stopwords
     from nltk.tokenize import word_tokenize
+
+    
+    # Do NOT download NLTK corpora at runtime. In restricted / read-only
+    # containers this can crash the app on startup with PermissionError.
+    # Ensure required corpora (punkt, stopwords) are installed during Docker
+    # build and/or via a writable NLTK_DATA location.
+
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "email_connectors"))
-from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
-from outlook_connector import get_outlook_auth_url, get_outlook_tokens, refresh_outlook_token, fetch_outlook_emails
-from email_scanner import scan_emails_with_model
-import imap_connector
-import imap_store
-from crypto_utils import encrypt_secret, decrypt_secret, CredentialEncryptionError
-from apscheduler.schedulers.background import BackgroundScheduler
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -903,11 +916,13 @@ def get_insights():
         return jsonify({"error": str(e)}), 500
 
 
+
 # ============================================
 # EMAIL PROVIDER ROUTES
 # ============================================
 
 TOKEN_STORE = {}
+
 
 @app.route("/gmail/auth-url", methods=["GET"])
 @validate_request
@@ -928,9 +943,7 @@ def gmail_callback():
         return jsonify({"error": "Authorization code is missing"}), 400
     try:
         tokens = get_gmail_tokens(code, redirect_uri)
-        if username not in TOKEN_STORE:
-            TOKEN_STORE[username] = {}
-        TOKEN_STORE[username]["gmail"] = tokens
+        oauth_store.save_oauth_tokens(username, "gmail", tokens)
         return jsonify({"message": "Gmail connected successfully"})
     except Exception as e:
         return jsonify({"error": f"Failed to exchange Google code: {str(e)}"}), 500
@@ -942,7 +955,12 @@ def gmail_emails():
     username = _require_username()
     if not username:
         return jsonify({"error": "Missing X-User-Username header"}), 401
+
     user_tokens = TOKEN_STORE.get(username, {}).get("gmail")
+
+    user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
+    
+
     if not user_tokens:
         return jsonify({"error": "Gmail account not connected"}), 401
     try:
@@ -950,11 +968,13 @@ def gmail_emails():
             emails = fetch_gmail_emails(user_tokens.get("access_token"), limit=50)
         except requests.exceptions.HTTPError as err:
             if err.response.status_code == 401 and user_tokens.get("refresh_token"):
-                new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
-                user_tokens["access_token"] = new_tokens["access_token"]
-                if "refresh_token" in new_tokens:
-                    user_tokens["refresh_token"] = new_tokens["refresh_token"]
-                emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                try:
+                    new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
+                    oauth_store.save_oauth_tokens(username, "gmail", new_tokens)
+                    user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
+                    emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                except Exception as refresh_err:
+                    raise refresh_err
             else:
                 raise err
         return jsonify({"emails": emails})
@@ -985,12 +1005,91 @@ def outlook_callback():
         return jsonify({"error": "Authorization code is missing"}), 400
     try:
         tokens = get_outlook_tokens(code, redirect_uri)
-        if username not in TOKEN_STORE:
-            TOKEN_STORE[username] = {}
-        TOKEN_STORE[username]["outlook"] = tokens
+        oauth_store.save_oauth_tokens(username, "outlook", tokens)
         return jsonify({"message": "Outlook connected successfully"})
     except Exception as e:
         return jsonify({"error": f"Failed to exchange Outlook code: {str(e)}"}), 500
+
+
+@app.route("/outlook/emails", methods=["GET"])
+@internal_endpoint_required
+def outlook_emails():
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    user_tokens = oauth_store.get_oauth_tokens(username, "outlook")
+    
+    if not user_tokens:
+        return jsonify({"error": "Outlook account not connected"}), 401
+        
+    try:
+        try:
+            emails = fetch_outlook_emails(user_tokens.get("access_token"), limit=50)
+        except requests.exceptions.HTTPError as err:
+            if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                try:
+                    new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
+                    oauth_store.save_oauth_tokens(username, "outlook", new_tokens)
+                    user_tokens = oauth_store.get_oauth_tokens(username, "outlook")
+                    emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                except Exception as refresh_err:
+                    raise refresh_err
+            else:
+                raise err
+        return jsonify({"emails": emails})
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch Outlook emails: {str(e)}"}), 500
+
+@app.route("/scan-emails", methods=["POST"])
+@internal_endpoint_required
+def scan_emails_route():
+    data = request.get_json(silent=True) or {}
+    provider = data.get("provider", "").lower()
+    username = _require_username()
+    if not username:
+        return jsonify({"error": "Missing X-User-Username header"}), 401
+    
+    if provider not in ("gmail", "outlook"):
+        return jsonify({"error": "Invalid provider. Must be 'gmail' or 'outlook'."}), 400
+        
+    user_tokens = oauth_store.get_oauth_tokens(username, provider)
+    if not user_tokens:
+        return jsonify({"error": f"{provider.capitalize()} account not connected."}), 401
+        
+    try:
+        if provider == "gmail":
+            try:
+                emails = fetch_gmail_emails(user_tokens.get("access_token"), limit=50)
+            except requests.exceptions.HTTPError as err:
+                if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                    try:
+                        new_tokens = refresh_gmail_token(user_tokens["refresh_token"])
+                        oauth_store.save_oauth_tokens(username, "gmail", new_tokens)
+                        user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
+                        emails = fetch_gmail_emails(user_tokens["access_token"], limit=50)
+                    except Exception as refresh_err:
+                        raise refresh_err
+                else:
+                    raise err
+        else:
+            try:
+                emails = fetch_outlook_emails(user_tokens.get("access_token"), limit=50)
+            except requests.exceptions.HTTPError as err:
+                if err.response.status_code == 401 and user_tokens.get("refresh_token"):
+                    try:
+                        new_tokens = refresh_outlook_token(user_tokens["refresh_token"])
+                        oauth_store.save_oauth_tokens(username, "outlook", new_tokens)
+                        user_tokens = oauth_store.get_oauth_tokens(username, "outlook")
+                        emails = fetch_outlook_emails(user_tokens["access_token"], limit=50)
+                    except Exception as refresh_err:
+                        raise refresh_err
+                else:
+                    raise err
+                    
+        scan_results = scan_emails_with_model(emails)
+        return jsonify(scan_results)
+    except Exception as e:
+        return jsonify({"error": f"Email scan execution failed: {str(e)}"}), 500
 
 
 # ============================================
@@ -998,9 +1097,66 @@ def outlook_callback():
 # ============================================
 
 imap_store.init_db()
-init_spam_words_db()
+oauth_store.init_db()
 scheduler = BackgroundScheduler()
 scheduler.start()
+
+
+def _refresh_oauth_tokens():
+    """Runs inside the scheduler thread: refreshes OAuth tokens close to expiration."""
+    try:
+        expiring = oauth_store.get_expiring_oauth_tokens(threshold_minutes=10)
+    except Exception as e:
+        print(f"[oauth-refresh] failed to fetch expiring tokens: {e}")
+        return
+
+    for token_entry in expiring:
+        username = token_entry["username"]
+        provider = token_entry["provider"]
+        refresh_token = token_entry["refresh_token"]
+
+        if not refresh_token:
+            print(f"[oauth-refresh] No refresh token for {username} ({provider})")
+            continue
+
+        try:
+            if provider == "gmail":
+                new_tokens = refresh_gmail_token(refresh_token)
+            elif provider == "outlook":
+                new_tokens = refresh_outlook_token(refresh_token)
+            else:
+                continue
+
+            oauth_store.save_oauth_tokens(username, provider, new_tokens)
+            print(f"[oauth-refresh] successfully refreshed token for {username} ({provider})")
+        except requests.exceptions.HTTPError as err:
+            is_auth_error = False
+            try:
+                if err.response is not None:
+                    if err.response.status_code in (400, 401):
+                        err_json = err.response.json()
+                        err_desc = err_json.get("error", "")
+                        if "invalid_grant" in err_desc or err_json.get("error_description", ""):
+                            is_auth_error = True
+            except Exception:
+                pass
+
+            if is_auth_error or (err.response is not None and err.response.status_code == 400):
+                print(f"[oauth-refresh] Token revoked/invalid for {username} ({provider}). Deleting from DB.")
+                oauth_store.delete_oauth_tokens(username, provider)
+            else:
+                print(f"[oauth-refresh] Temporary HTTP error refreshing token for {username} ({provider}): {err}")
+        except Exception as e:
+            print(f"[oauth-refresh] failed to refresh token for {username} ({provider}): {e}")
+
+
+scheduler.add_job(
+    _refresh_oauth_tokens,
+    "interval",
+    minutes=5,
+    id="oauth_token_refresh",
+    replace_existing=True,
+)
 
 
 def _run_imap_scan(username):

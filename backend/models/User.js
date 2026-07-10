@@ -74,9 +74,13 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Username is required'],
       unique: true,
       trim: true,
+
       minlength: 3,
       maxlength: 30,
       match: [/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores']
+
+      minlength: [3, 'Username must be at least 3 characters long'],
+      maxlength: [30, 'Username cannot exceed 30 characters'],
     },
     email: {
       type: String,
@@ -88,11 +92,15 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
+
       required: function() {
         return this.provider === 'local';
       },
       minlength: 6,
       select: false // Don't return password by default
+      required: false,
+      minlength: [6, 'Password must be at least 6 characters long'],
+
     },
     googleId: {
       type: String,
@@ -105,6 +113,7 @@ const userSchema = new mongoose.Schema(
     },
     provider: {
       type: String,
+
       enum: ['local', 'google'],
       default: 'local'
     },
@@ -120,6 +129,13 @@ const userSchema = new mongoose.Schema(
       type: [String],
       enum: Object.values(PERMISSIONS),
       default: ROLE_PERMISSIONS[ROLES.USER]
+
+      enum: {
+        values: ['local', 'google'],
+        message: '{VALUE} is not a valid provider'
+      },
+      default: 'local',
+
     },
     // ============================================
     // WEBHOOK URL (Existing)
@@ -128,7 +144,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: null,
+
       match: [/^https?:\/\/.+/, 'Please enter a valid HTTP or HTTPS URL']
+
+      match: [/^https?:\/\/.+/, 'Please enter a valid HTTP or HTTPS URL'],
+      maxlength: [2000, 'Webhook URL cannot exceed 2000 characters'],
+
     },
     // ============================================
     // ACCOUNT STATUS (Optional)

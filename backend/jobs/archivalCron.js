@@ -26,8 +26,17 @@ const HistoryArchive = require('../models/HistoryArchive');
             
             if (batch.length === 0) break;
             
+            // Map the old records to the new schema
+            const mappedRecords = batch.map(record => ({
+                userId: record.user,
+                message: record.query,
+                prediction: record.prediction,
+                confidenceScore: record.confidence,
+                createdAt: record.createdAt
+            }));
+
             // 2. Bulk insert them into the Archive collection
-            await HistoryArchive.insertMany(batch, { session });
+            await HistoryArchive.insertMany(mappedRecords, { session });
             
             // 3. Bulk delete them from the main History collection
             const batchIds = batch.map(doc => doc._id);

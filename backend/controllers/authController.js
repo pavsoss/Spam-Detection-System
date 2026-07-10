@@ -36,8 +36,6 @@ const buildAuthResponse = (user, token) => ({
 // AUTH CONTROLLERS
 // ============================================
 
-// @desc    Register user
-// @route   POST /api/auth/register
 const register = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -77,8 +75,6 @@ const register = async (req, res) => {
   }
 };
 
-// @desc    Login user
-// @route   POST /api/auth/login
 const login = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -168,8 +164,6 @@ const logout = async (req, res) => {
   }
 };
 
-// @desc    Get current user
-// @route   GET /api/auth/me
 const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
@@ -180,8 +174,6 @@ const getMe = async (req, res) => {
   }
 };
 
-// @desc    Google OAuth login
-// @route   POST /api/auth/google
 const googleLogin = async (req, res) => {
   try {
     const { idToken } = req.body;
@@ -251,8 +243,6 @@ const googleLogin = async (req, res) => {
   }
 };
 
-// @desc    Update user avatar
-// @route   POST /api/auth/avatar
 const updateAvatar = async (req, res) => {
   try {
     if (!req.file) {
@@ -300,8 +290,6 @@ const updateAvatar = async (req, res) => {
   }
 };
 
-// @desc    Forgot password - Send reset link
-// @route   POST /api/auth/forgot-password
 const forgotPassword = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -354,8 +342,6 @@ const forgotPassword = async (req, res) => {
   }
 };
 
-// @desc    Reset password
-// @route   POST /api/auth/reset-password/:id/:token
 const resetPassword = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -388,8 +374,6 @@ const resetPassword = async (req, res) => {
   }
 };
 
-// @desc    Change password (authenticated)
-// @route   POST /api/auth/change-password
 const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -448,8 +432,6 @@ const changePassword = async (req, res) => {
   }
 };
 
-// @desc    Update webhook URL
-// @route   PUT /api/auth/webhook
 const updateWebhook = async (req, res) => {
   try {
     const { webhookUrl } = req.body;
@@ -476,13 +458,7 @@ const updateWebhook = async (req, res) => {
   }
 };
 
-
-// @desc    Get user's session status
-// @route   GET /api/auth/session-status
 const getSessionStatus = async (req, res) => {
-
-const logout = async (req, res) => {
-
   try {
     const token = req.token;
     const decoded = jwt.decode(token);
@@ -504,8 +480,8 @@ const logout = async (req, res) => {
   }
 };
 
-
 // ============================================
+
 // ZERO TRUST - ROLE MANAGEMENT
 // ============================================
 
@@ -633,6 +609,9 @@ const getRolesAndPermissions = async (req, res) => {
 
 // ============================================
 // 📌 EXPORTS - ONLY ONCE AT THE VERY END
+
+// EXPORTS
+
 // ============================================
 
 module.exports = { 
@@ -646,6 +625,7 @@ module.exports = {
   resetPassword,
   changePassword,
   updateWebhook,
+
   getSessionStatus,
   assignRole,
   getUserPermissions,
@@ -655,4 +635,8 @@ module.exports = {
 };
 
 module.exports = { register, login, logout, getMe, googleLogin, updateAvatar, forgotPassword, resetPassword, updateWebhook };
+
+
+  getSessionStatus
+};
 

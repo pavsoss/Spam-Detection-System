@@ -1,9 +1,10 @@
 const { checkCache, setCache } = require('./middleware/cacheMiddleware');
-const { formatError, errorHandler, errorCodes, classifyMlApiError } = require('./utils/errorHelper');
+const { formatError, errorHandler, errorCodes, classifyMlApiError , handleMlApiError } = require('./utils/errorHelper');
+const logger = require("./utils/logger");
 require("dotenv").config();
 
 process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  logger.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 const dns = require("dns");
 const validateEnv = require('./utils/validateEnv');
@@ -18,6 +19,7 @@ const compression = require('compression');
 const { v4: uuidv4 } = require('uuid');
 const helmet = require('helmet');
 const axios = require("axios");
+
 // Initialize background jobs
 require('./jobs/archivalCron');
 const { preventCacheStampede } = require('./middleware/cacheMiddleware');
@@ -40,26 +42,15 @@ const utilityRoutes = require("./routes/utilityRoutes");
 // ===== STARTUP TIMER =====
 const SERVER_START_TIME = Date.now();
 const startupLogs = [];
-
+const { configureAxios } = require('./config/axios');
+configureAxios(); // Apply the global axios configuration
 const logStartupTime = (component, startTime) => {
   const elapsed = Date.now() - startTime;
   startupLogs.push({ component, elapsed });
-  console.log(`⏱️ ${component} loaded in ${elapsed}ms`);
+  logger.info(`⏱️ ${component} loaded in ${elapsed}ms`);
 };
 
-// Configure global request interceptor to append the internal secret API key
-axios.interceptors.request.use(
-  (config) => {
-    config.timeout = 15000; // 15 seconds timeout
-    // No hardcoded fallback: INTERNAL_SECRET is validated as mandatory at
-    // startup (see utils/validateEnv.js), so it is guaranteed present here.
-    config.headers["X-Internal-Secret"] = process.env.INTERNAL_SECRET;
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+
 const mongoose = require("mongoose");
 
 const History = require("./models/History");
@@ -98,12 +89,12 @@ if (process.env.SENTRY_DSN && process.env.SENTRY_DSN !== 'https://your-sentry-ds
   app.use(Sentry.Handlers.requestHandler());
   app.use(Sentry.Handlers.tracingHandler());
   sentryEnabled = true;
-  console.log('✅ Sentry initialized');
+  logger.info('✅ Sentry initialized');
 
   // Make Sentry available globally
   global.Sentry = Sentry;
 } else {
-  console.log('ℹ️ Sentry disabled (no valid DSN provided)');
+  logger.info('ℹ️ Sentry disabled (no valid DSN provided)');
   // Mock Sentry to prevent errors
   global.Sentry = {
     captureException: () => { },
@@ -115,29 +106,29 @@ if (process.env.SENTRY_DSN && process.env.SENTRY_DSN !== 'https://your-sentry-ds
 
 // Connect to MongoDB WITH RETRY
 const connectWithRetry = async (retries = 5, delay = 5000) => {
-  console.log("Attempting to connect to MongoDB...");
-  console.log('Max retries:', retries, 'Delay between retries (ms):', delay);
+  logger.info("Attempting to connect to MongoDB...");
+  logger.info('Max retries:', retries, 'Delay between retries (ms):', delay);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await mongoose.connect(config.mongodbUri);
-      console.log(`✅ MongoDB connected successfully (attempt ${attempt})`);
+      logger.info(`✅ MongoDB connected successfully (attempt ${attempt})`);
       monitorConnectionPool();
       seedAdminUser();
       return true;
     } catch (err) {
-      console.error(`❌ MongoDB connection attempt ${attempt} failed:`, err.message);
+      logger.error(`❌ MongoDB connection attempt ${attempt} failed:`, err.message);
 
       if (attempt === retries) {
-        console.error("Max retries reached. Exiting process.");
-        console.error("Please check your MongoDB connection string and ensure the database is accessible.");
-        console.error('1.MongoDB is running');
-        console.error('2.MongoDB URI is correct in .env file');
-        console.error('   3. Network connectivity\n');
+        logger.error("Max retries reached. Exiting process.");
+        logger.error("Please check your MongoDB connection string and ensure the database is accessible.");
+        logger.error('1.MongoDB is running');
+        logger.error('2.MongoDB URI is correct in .env file');
+        logger.error('   3. Network connectivity\n');
         process.exit(1);
       }
 
-      console.log(`⏳ Waiting ${delay / 1000}s before retry...\n`);
+      logger.info(`⏳ Waiting ${delay / 1000}s before retry...\n`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -154,11 +145,11 @@ const monitorConnectionPool = () => {
         const used = pool.usedCount || 0;
         const usagePercent = size > 0 ? (used / size) * 100 : 0;
 
-        console.debug(`[DB Pool] Size: ${size}, Available: ${available}, Used: ${used} (${usagePercent}%)`);
+        logger.debug(`[DB Pool] Size: ${size}, Available: ${available}, Used: ${used} (${usagePercent}%)`);
 
         //Alert if usage exceeds 80%
         if (usagePercent > 80) {
-          console.warn(`[DB Pool] ⚠️ High connection pool usage: ${usagePercent.toFixed(2)}%`);
+          logger.warn(`[DB Pool] ⚠️ High connection pool usage: ${usagePercent.toFixed(2)}%`);
         }
       }
     } catch (err) {
@@ -183,9 +174,9 @@ if (process.env.NODE_ENV === 'development') {
     const duration = Date.now() - start;
 
     if (duration > 100) { // Log queries taking longer than 100ms
-      console.log(`🐢 [${new Date().toISOString()}] Slow Query (${duration}ms):`);
-      console.log(`   Collection: ${this._collection.collectionName}`);
-      console.log(`   Query:`, JSON.stringify(this._conditions));
+      logger.info(`🐢 [${new Date().toISOString()}] Slow Query (${duration}ms):`);
+      logger.info(`   Collection: ${this._collection.collectionName}`);
+      logger.info(`   Query:`, JSON.stringify(this._conditions));
     }
 
     return result;
@@ -216,7 +207,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Request-ID', requestId);
 
   // Log the request with the request ID
-  console.log(`[${requestId}] ${req.method} ${req.originalUrl}`);
+  logger.info(`[${requestId}] ${req.method} ${req.originalUrl}`);
 
   //Track time
   const startTime = Date.now();
@@ -224,7 +215,7 @@ app.use((req, res, next) => {
   //Log when response is finished
   res.on('finish', () => {
     const duration = Date.now() - startTime;
-    console.log(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
+    logger.info(`[${requestId}] ⬅️ ${req.method} ${req.originalUrl} completed in ${duration}ms (${res.statusCode})`);
   });
 
   next();
@@ -267,7 +258,6 @@ app.get("/", (req, res) => {
 });
 
 
-
 // ========================================
 // START SERVER
 // ========================================
@@ -276,7 +266,7 @@ const PORT = config.port;
 const server = app.listen(PORT, () => {
   displayBanner();
   const totalTime = Date.now() - SERVER_START_TIME;
-  console.log(`⏱️ Total startup time: ${totalTime}ms`);
+  logger.info(`⏱️ Total startup time: ${totalTime}ms`);
 });
 
 
@@ -295,14 +285,14 @@ server.on('connection', (connection) => {
 
 // 2. The Graceful Shutdown Function
 const gracefulShutdown = async (signal) => {
-  console.log(`\n🛑 [${signal}] signal received: closing HTTP server...`);
+  logger.info(`\n🛑 [${signal}] signal received: closing HTTP server...`);
 
   let forceClosed = false;
 
   // 15-Second Fallback Timeout
   const timeoutId = setTimeout(async () => {
     forceClosed = true;
-    console.error('⚠️ [Timeout] Could not close connections in time, forcefully shutting down!');
+    logger.error('⚠️ [Timeout] Could not close connections in time, forcefully shutting down!');
 
     // Destroy all active connections forcefully
     for (const connection of connections) {
@@ -320,16 +310,16 @@ const gracefulShutdown = async (signal) => {
     if (forceClosed) return;
 
     clearTimeout(timeoutId);
-    console.log('✅ HTTP server closed. All active requests completed normally.');
+    logger.info('✅ HTTP server closed. All active requests completed normally.');
 
     try {
       if (mongoose.connection.readyState === 1) {
         await mongoose.disconnect();
-        console.log('✅ MongoDB disconnected successfully.');
+        logger.info('✅ MongoDB disconnected successfully.');
       }
       process.exit(0);
     } catch (err) {
-      console.error('❌ Error during MongoDB disconnection:', err);
+      logger.error('❌ Error during MongoDB disconnection:', err);
       process.exit(1);
     }
   });
@@ -344,8 +334,3 @@ const gracefulShutdown = async (signal) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 module.exports = { app };
-
-
-
-
-
