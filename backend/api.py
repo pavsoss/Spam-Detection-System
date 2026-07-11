@@ -306,6 +306,9 @@ xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label
 
 # In-memory storage for spam words
 spam_words_storage = {}
+# In-memory storage for spam words
+spam_words_storage = {}
+
 # SQLite Persistent Storage for spam words
 import sqlite3
 from datetime import datetime, timezone
