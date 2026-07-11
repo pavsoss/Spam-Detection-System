@@ -762,7 +762,11 @@ def extract_words(text):
 
 
 def get_wordcloud_data():
+
    if spam_words_storage:
+
+    if spam_words_storage:
+
         sorted_words = sorted(spam_words_storage.items(), key=lambda x: x[1], reverse=True)
         return [{"word": w, "count": c} for w, c in sorted_words[:50]]
     return None
@@ -927,6 +931,7 @@ def get_insights():
 # ============================================
 
 TOKEN_STORE = {}
+
 
 @app.route("/gmail/auth-url", methods=["GET"])
 @validate_request
