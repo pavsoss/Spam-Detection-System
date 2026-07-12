@@ -187,6 +187,29 @@ const googleLogin = async (req, res) => {
     });
 
     const payload = ticket.getPayload();
+
+    if (!payload) {
+      return res.status(400).json({ error: 'Invalid Google token payload.' });
+    }
+    // 1. Email must be verified by Google
+    if (!payload.email_verified) {
+      return res.status(400).json({ error: 'Google email is not verified. Please verify your email on Google.' });
+    }
+    // 2. Issuer must be exactly Google's trusted issuer
+    const allowedIssuers = ['https://accounts.google.com', 'accounts.google.com'];
+    if (!allowedIssuers.includes(payload.iss)) {
+      return res.status(400).json({ error: `Invalid token issuer: ${payload.iss}` });
+    }
+    // 3. Audience must match our Client ID (Security check)
+    if (payload.aud !== process.env.GOOGLE_CLIENT_ID) {
+      return res.status(400).json({ error: 'Invalid token audience.' });
+    }
+    // 4. Subject (unique Google ID) must exist
+    if (!payload.sub) {
+      return res.status(400).json({ error: 'Missing subject (sub) in Google token.' });
+    }
+    // ==========================================
+
     const { sub: googleId, email, name, picture } = payload;
 
     let user = await User.findOne({ email });
@@ -239,7 +262,7 @@ const googleLogin = async (req, res) => {
     });
   } catch (err) {
     console.error('Google Auth Error:', err);
-    res.status(400).json({ error: 'Invalid Google token.' });
+    res.status(400).json({ error: 'Invalid Google token or authentication failed.' });
   }
 };
 
