@@ -7,7 +7,6 @@ import numpy as np
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 
-from api import limiter
 
 bulk_predict_bp = Blueprint("bulk_predict", __name__)
 
@@ -115,7 +114,6 @@ def parse_and_predict_file(file):
     return results, None
 
 @bulk_predict_bp.route("/bulk-predict", methods=["POST"])
-@limiter.limit("50 per minute")
 def bulk_predict():
 
 

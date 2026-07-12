@@ -1063,7 +1063,7 @@ def outlook_callback():
 
 
 @app.route("/outlook/emails", methods=["GET"])
-@internal_endpoint_required
+@validate_internal_request
 def outlook_emails():
     username = _require_username()
     if not username:
@@ -1092,7 +1092,7 @@ def outlook_emails():
         return jsonify({"error": f"Failed to fetch Outlook emails: {str(e)}"}), 500
 
 @app.route("/scan-emails", methods=["POST"])
-@internal_endpoint_required
+@validate_internal_request
 def scan_emails_route():
     data = request.get_json(silent=True) or {}
     provider = data.get("provider", "").lower()
