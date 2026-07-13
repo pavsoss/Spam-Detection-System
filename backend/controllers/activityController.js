@@ -114,11 +114,23 @@ exports.getStats = async (req, res) => {
 };
 
 // ==================== USER ACTIVITY HEATMAP LOGIC ====================
-// ==================== USER ACTIVITY HEATMAP LOGIC ====================
 exports.getActivity = async (req, res) => {
   try {
     const { userId } = req.params;
     const { year, month } = req.query;
+
+    const yearNum = parseInt(year, 10);
+    const monthNum = parseInt(month, 10);
+
+    if (!year || isNaN(yearNum)) {
+      return res.status(400).json({ error: "Valid year query parameter (number) is required." });
+    }
+    if (!month || isNaN(monthNum)) {
+      return res.status(400).json({ error: "Valid month query parameter (number) is required." });
+    }
+    if (monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({ error: "Month must be between 1 and 12." });
+    }
 
     // Validate user id format before using it in aggregation
     if (!mongoose.Types.ObjectId.isValid(userId)) {
@@ -132,8 +144,8 @@ exports.getActivity = async (req, res) => {
       });
     }
 
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+    const startDate = new Date(yearNum, monthNum - 1, 1);
+    const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
 
     const activities = await History.aggregate([
       {
