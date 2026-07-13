@@ -1,7 +1,7 @@
 // backend/controllers/activityController.js
 const mongoose = require('mongoose');
 const History = require('../models/History');
-
+const { replacements, tonePrefixes } = require('../utils/despamificationRules');
 // ==================== DE-SPAMIFICATION LOGIC ====================
 exports.despamify = async (req, res) => {
   try {
@@ -14,32 +14,6 @@ exports.despamify = async (req, res) => {
     // Simple de-spamification logic
     let deSpammed = text;
 
-    const replacements = {
-      'URGENT': 'Someone wants to contact you',
-      'FREE': 'There is an offer',
-      'WIN': 'There is a notification',
-      'PRIZE': 'There is a message about rewards',
-      'CLAIM': 'There is a message for you',
-      'CLICK': 'There is a link to visit',
-      'NOW': 'soon',
-      '!!!': '.',
-      '$$$': '',
-      '100%': '',
-      'GUARANTEED': '',
-      'LIMITED TIME': '',
-      'ACT NOW': '',
-      "DON'T MISS": '',
-      'EXCLUSIVE': '',
-      'YOU WON': 'There is a notification'
-    };
-
-    // Apply tone adjustments
-    const tonePrefixes = {
-      neutral: '',
-      friendly: 'Hi there! ',
-      formal: 'We would like to inform you that ',
-      casual: 'Hey! '
-    };
 
     const prefix = tonePrefixes[tone] || '';
 
