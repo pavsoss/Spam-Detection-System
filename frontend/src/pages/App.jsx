@@ -684,6 +684,19 @@ function App() {
                       const detected = detectType(value);
                       setType(detected);
                     }}
+                    onKeyDown={(e) => {
+                      // Support Ctrl+Enter (Windows/Linux) and Cmd+Enter (macOS) to submit prediction
+                      if (
+                        (e.ctrlKey || e.metaKey) &&
+                        e.key === "Enter" &&
+                        !loading &&
+                        text.trim().length > 0 &&
+                        text.length <= 5000
+                      ) {
+                        e.preventDefault(); // Prevent default newline insertion
+                        handlePredict();
+                      }
+                    }}
                   />
 
                   {text && (
