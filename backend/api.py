@@ -632,6 +632,13 @@ def make_prediction_response(
         response["translated_text"] = translated_text
     if domain_analysis is not None:
         response["domain_analysis"] = domain_analysis
+        # Thin, top-level summary of domain_analysis for consumers that just
+        # want a quick URL risk signal without parsing the full breakdown.
+        response["url_risk"] = {
+            "is_url_present": bool(domain_analysis.get("domains_found")),
+            "score": domain_analysis.get("max_risk_score", 0),
+            "level": domain_analysis.get("overall_risk", "SAFE"),
+        }
     if explanation is not None:
         response["explanation"] = explanation
     if severity is not None:

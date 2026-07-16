@@ -37,6 +37,7 @@ function App() {
   const [confidence, setConfidence] = useState(null);
   const [severity, setSeverity] = useState(null);
   const [explanation, setExplanation] = useState(null);
+  const [urlRisk, setUrlRisk] = useState(null);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
   const [errorInfo, setErrorInfo] = useState(null);
@@ -372,6 +373,7 @@ const analyzeEmojiSentiment = (text) => {
       setConfidence(res.data.confidence ?? null);
       setSeverity(res.data.severity || null);
       setExplanation(res.data.explanation || null);
+      setUrlRisk(res.data.url_risk || null);
       setErrorInfo(null);
     } catch (error) {
       console.error('API Error:', error);
@@ -833,7 +835,7 @@ const analyzeEmojiSentiment = (text) => {
                       </span>
                     </div>
                      
-                    <URLPreview url={text} darkMode={isDark}>
+                    <URLPreview url={text} darkMode={isDark} urlRisk={urlRisk}>
                       <span className="text-blue-500 underline cursor-pointer">
                        {text}
                       </span>
@@ -1012,6 +1014,7 @@ const analyzeEmojiSentiment = (text) => {
                       setResult("");
                       setConfidence(null);
                       setExplanation(null);
+                      setUrlRisk(null);
                       setErrorInfo(null);
                       setCopied(false);
                       setType("message");

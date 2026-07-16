@@ -219,6 +219,11 @@ The Spam Detection System now returns human-readable explanation details with ev
     "overall_risk": "SAFE",
     "details": []
   },
+  "url_risk": {
+    "is_url_present": false,
+    "score": 0,
+    "level": "SAFE"
+  },
   "explanation": {
     "score": 94,
     "reasons": [
@@ -272,6 +277,37 @@ curl -X POST http://localhost:5000/predict \
 * The response is backward compatible with existing integrations.
 * `result` and `prediction` both return the same label.
 * `explanation` is optional in older API clients, but modern clients can use it to display detailed spam reasoning.
+
+## 🔗 URL / Phishing Risk Detection
+
+Every `/predict` call scans the input text for URLs (`domain_checker.py`) and reports the result two ways:
+
+* **`domain_analysis`** – the full breakdown: every domain found, each domain's individual risk report (`age_days`, `blacklisted`, `blacklist_details`, `threat_intel_details`, `risk_score`, `risk_level`, `recommendation`), and the overall `max_risk_score` / `overall_risk` across all domains in the message.
+* **`url_risk`** – a thin, top-level summary of `domain_analysis` for clients that just want a quick signal without parsing the full structure:
+
+  | Field | Description |
+  |---|---|
+  | `is_url_present` | `true` if any URL/domain was found in the text |
+  | `score` | Highest risk score (0-100) across all domains found |
+  | `level` | `SAFE`, `WARNING`, or `BLOCK` |
+
+Risk scoring combines several signals per domain:
+
+* **Domain age** – looked up via WHOIS (`python-whois`); newly registered domains score higher risk.
+* **DNSBL blacklists** – checked via `dnspython` against Spamhaus ZEN, SpamCop, Barracuda, and Spamhaus DBL.
+* **Threat intelligence** – always checks URLhaus (no key required); optionally checks Google Safe Browsing and VirusTotal if API keys are configured.
+* **Heuristics** (`api.py`) – IP-literal hosts, punycode hosts, `@` in the URL, excessive hyphens, and suspicious TLDs (`.tk`, `.ml`, `.ga`, `.cf`, `.gq`, `.xyz`, `.top`, `.work`, `.click`, `.loan`, `.men`, `.review`) feed into the dedicated URL classifier used when `type` is `"url"`.
+
+To enable the optional threat-intel providers, set these environment variables for the Flask API:
+
+```bash
+SAFE_BROWSING_API_KEY=your_google_safe_browsing_key   # optional
+VIRUSTOTAL_API_KEY=your_virustotal_key                 # optional
+```
+
+Without these keys, URLhaus and the WHOIS/DNSBL checks still run — the risk score just won't include Safe Browsing or VirusTotal verdicts.
+
+The frontend's URL preview (hover on a detected link) shows this same `url_risk` signal once a prediction has run, falling back to a lightweight local heuristic (known shortener domains, suspicious keywords) before the first prediction.
 
 ## Mongo Db Atlas Backend
 .env
