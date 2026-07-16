@@ -20,3 +20,26 @@ router.get("/breakdown", getBreakdown);
 router.get('/model-drift', checkModelDrift); 
 router.get("/me", getPersonalSummary);
 module.exports = router;
+
+router.get('/trends',protect, async (req,res) => {
+ try {
+    const { days = 7 } = req.query;
+    const predictions = await Prediction.find({
+      userId: req.user.id,
+      createdAt: { $gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
+    });
+    
+    const trends = {};
+    predictions.forEach(p => {
+      const date = p.createdAt.toISOString().split('T')[0];
+      if (!trends[date]) trends[date] = { total: 0, spam: 0 };
+      trends[date].total++;
+      if (p.result === 'spam' || p.result === 'smishing') trends[date].spam++;
+    });
+    
+    res.json(Object.entries(trends).map(([date, d]) => ({ date, ...d })));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch trends' });
+  }
+});
+      

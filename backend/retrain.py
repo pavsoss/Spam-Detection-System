@@ -30,6 +30,8 @@ import os
 import pickle
 import os
 from collections import Counter
+import pandas as pd
+from utils.text_normalizer import normalizer
 
 import shutil
 import sys
@@ -48,7 +50,8 @@ VALID_LABELS = {"ham", "spam", "smishing"}
 MODEL_PATH = "linear_svm_model.pkl"
 VECTORIZER_PATH = "tfidf_vectorizer.pkl"
 LABEL_ENCODER_PATH = "label_encoder.pkl"
-
+df = pd.read_csv('dataset.csv')
+df['normalized_text'] = df['text'].apply(lambda x: normalizer.normalize(x))
 
 def backup_existing_files():
     """Copy existing .pkl files to a timestamped backup folder before overwriting."""
@@ -175,11 +178,14 @@ def main():
     vectorizer = TfidfVectorizer(max_features=args.max_features)
     X_train_vec = vectorizer.fit_transform(X_train_text)
     X_test_vec = vectorizer.transform(X_test_text)
+    X = vectorizer.fit_transform(df['normalized_text'])
+    y = df['label']
 
     # Step 6: Train model
     print("Training LinearSVC...")
     model = LinearSVC()
     model.fit(X_train_vec, y_train)
+    model.fit(X, y)
 
     # Step 7: Evaluate
     y_pred = model.predict(X_test_vec)
@@ -200,6 +206,8 @@ def main():
     joblib.dump(final_model, MODEL_PATH)
     joblib.dump(final_vectorizer, VECTORIZER_PATH)
     joblib.dump(label_encoder, LABEL_ENCODER_PATH)
+    pickle.dump(model, open('linear_svm_model.pkl', 'wb'))
+    pickle.dump(vectorizer, open('tfidf_vectorizer.pkl', 'wb'))
 
     print(f"\n Saved: {MODEL_PATH}")
     print(f" Saved: {VECTORIZER_PATH}")

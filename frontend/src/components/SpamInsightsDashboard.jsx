@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTheme } from "../context/ThemeContext";
 import api from "../utils/axiosInstance";
+import { SpamTrends } from './SpamTrends';
 
 export default function SpamInsightsDashboard() {
   const [insights, setInsights] = useState(null);
@@ -182,6 +183,11 @@ export default function SpamInsightsDashboard() {
               </div>
             </div>
           </div>
+
+          <div className="dashboard-section">
+             <SpamTrends />
+          </div>
+
 
           {/* Recent Suspicious Terms */}
           <h3 className="text-[10px] font-extrabold uppercase tracking-wider mb-2 opacity-70">Recently Detected Terms</h3>

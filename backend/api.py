@@ -3,9 +3,11 @@ import csv
 import joblib
 import numpy as np
 import os
+import pickle
 import re
 import hmac
 from collections import Counter
+from utils.text_normalizer import normalizer
 from urllib.parse import urlparse
 from functools import wraps
 from dotenv import load_dotenv
@@ -469,6 +471,16 @@ def predict():
                 "error": f"'text' must be a string, got {type(text).__name__}"
             }), 400
 
+        normalized_text = normalizer.normalize(text)
+        vectorized = vectorizer.transform([normalized_text])
+        prediction = model.predict(vectorized)[0]
+    
+        return jsonify({
+          'original_text': text,
+          'normalized_text': normalized_text,
+          'prediction': prediction
+        })
+
         # Maximum-length validation before any vectorization/inference work.
         if len(text) > MAX_MESSAGE_LENGTH:
             return jsonify({
@@ -653,6 +665,10 @@ SPAM_WORDS = {
     'billion': 6, 'rich': 6, 'secret': 6, 'miracle': 5, 'amazing': 5
 }
 
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.json
+    text = data.get('text', '')
 
 @app.route('/api/wordcloud', methods=['GET'])
 def get_wordcloud():
