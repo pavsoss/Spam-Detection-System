@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
-const { validateCSVUpload } = require('../middleware/fileValidation');
+const { parseUploadedFile } = require("../middleware/parseUploadedFile");
 const { bulkPredictLimiter } = require('../middleware/rateLimiter');
-const { processBulkPrediction } = require('../controllers/bulkPredictController');
+const { processBulkPrediction, handleBulkPrediction, downloadBulkPredictTemplate } = require('../controllers/bulkPredictController');
+
 
 /**
  * @route   POST /api/bulk-predict
@@ -14,32 +15,8 @@ router.post(
     '/bulk-predict',
     protect,
     bulkPredictLimiter,
-    validateCSVUpload, // <-- NEW: File validation middleware
-    async (req, res) => {
-        try {
-            // Access parsed CSV data
-            const { headers, rows, totalRows, filename, size } = req.parsedCSV;
-            
-            // Process predictions
-            const results = await processBulkPrediction(rows);
-            
-            res.json({
-                success: true,
-                totalRows: totalRows,
-                filename: filename,
-                size: size,
-                results: results
-            });
-            
-        } catch (error) {
-            console.error('Bulk prediction error:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Failed to process bulk prediction',
-                details: error.message
-            });
-        }
-    }
+parseUploadedFile,
+    handleBulkPrediction
 );
 
 /**
@@ -47,12 +24,6 @@ router.post(
  * @desc    Download CSV template
  * @access  Private
  */
-router.get('/bulk-predict/template', protect, (req, res) => {
-    const template = 'text,label\n"Your message here",""\n"Another message",""';
-    
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="bulk_predict_template.csv"');
-    res.send(template);
-});
+router.get('/bulk-predict/template', downloadBulkPredictTemplate);
 
 module.exports = router;

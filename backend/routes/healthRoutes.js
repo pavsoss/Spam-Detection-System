@@ -12,7 +12,7 @@ router.get('/', (req, res) => {
 });
 
 // ===== ADVANCED HEALTH ENDPOINT =====
-router.get('/', async (req, res) => {
+router.get('/detailed', async (req, res) => {
   try {
     const healthStatus = await getHealthStatus();
     const statusCode = healthStatus.status === "healthy" ? 200 : 503;

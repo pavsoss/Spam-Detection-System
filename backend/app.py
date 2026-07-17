@@ -4,6 +4,7 @@ from logging.handlers import RotatingFileHandler
 from flask import request, g
 from flask import Flask,request,jsonify
 import os
+import csv
 import joblib
 import re
 from collections import Counter
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import numpy as np
+from utils.spamSeverity import calculate_spam_severity
 
 load_dotenv()
 
@@ -63,6 +65,14 @@ def ratelimit_handler(e):
         "retry_after": 60
     }), 429 
 
+FEEDBACK_FILE = 'feedback_store.csv'
+
+def ensure_feedback_file():
+    if not os.path.exists(FEEDBACK_FILE):
+        with open(FEEDBACK_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['text', 'predicted_label', 'correct_label', 'submitted_at'])
+
 # ─── LOAD MODELS ────────────────────────────────────────────────
 MODEL_PATH=os.getenv("MODEL_PATH")
 VECTORIZER_PATH=os.getenv("VECTORIZER_PATH")
@@ -79,6 +89,14 @@ label_encoder = joblib.load(LABEL_ENCODER_PATH)
 @app.route("/")
 def home():
     return "ML API Running 🚀"
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'model_loaded': model is not None,
+        'vectorizer_loaded': vectorizer is not None
+    })
 
 
 # ─── HEALTH CHECK ENDPOINT ───────────────────────────────────────
@@ -122,7 +140,8 @@ def make_prediction_response(
     translated=False,
     translated_text=None,
     domain_analysis=None,
-    explanation=None
+    explanation=None,
+    severity=None
 ):
     """Enforces a strict standardized response schema for all predictions."""
     response = {
@@ -142,6 +161,8 @@ def make_prediction_response(
         response["domain_analysis"] = domain_analysis
     if explanation is not None:
         response["explanation"] = explanation
+    if severity is not None:
+        response["severity"] = severity
     return response
 
 
@@ -185,6 +206,7 @@ def predict():
 
         logger.info(f"Prediction: '{text[:50]}...' -> {final_output}")
             
+        import numpy as np
         decision_score = None
         confidence_score = 95.0
         try:
@@ -216,7 +238,8 @@ def predict():
             confidence_level=confidence_level,
             detected_language=detected_language,
             translated=translated,
-            translated_text=text if translated else None
+            translated_text=text if translated else None,
+            severity=calculate_spam_severity(original_text)
         )
         return jsonify(response_data)
 

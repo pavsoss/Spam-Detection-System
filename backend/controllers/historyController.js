@@ -20,7 +20,7 @@ const getSafeUserId = (req) => sanitizeInput(req.user.id);
 const getPaginationParams = (query, defaultLimit = 10, maxLimit = 100) => {
   const page = Math.max(1, parseInt(query.page) || 1);
   const limit = parseInt(query.limit) || defaultLimit;
-  const safeLimit = Math.min(limit, maxLimit);
+  const safeLimit = Math.max(1, Math.min(limit, maxLimit));
   const skip = (page - 1) * safeLimit;
 
   return { page, safeLimit, skip };
@@ -179,9 +179,22 @@ const bulkDeleteHistory = async (req, res) => {
       });
     }
 
+    const sanitizedIds = ids.map((id) =>
+      typeof id === "string" ? sanitizeInput(id.trim()) : id
+    );
+
+    if (!sanitizedIds.every((id) => typeof id === "string" && mongoose.Types.ObjectId.isValid(id))) {
+      return res.status(400).json({
+        success: false,
+        message: "All history ids must be valid ObjectIds.",
+      });
+    }
+
+    const safeUserId = getSafeUserId(req);
+
     const result = await History.deleteMany({
-      _id: { $in: ids },
-      user: req.user.id,
+      _id: { $in: sanitizedIds },
+      user: safeUserId,
     });
 
     res.json({
@@ -198,10 +211,23 @@ const bulkDeleteHistory = async (req, res) => {
   }
 };
 
+// Get history count
+const getHistoryCount = async (req, res) => {
+  try {
+    const safeUserId = getSafeUserId(req);
+    const count = await History.countDocuments({ user: safeUserId });
+    res.json({ success: true, count });
+  } catch (error) {
+    console.error('Count error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 module.exports = {
   getHistory,
   searchHistory,
   deleteHistoryItem,
   clearHistory,
   bulkDeleteHistory,
+  getHistoryCount
 };
