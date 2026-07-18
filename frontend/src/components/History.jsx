@@ -2,7 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-// Utility to prevent XSS rendering
+
 const escapeHTML = (str) => {
     if (!str) return '';
     return str
@@ -301,6 +301,7 @@ const fetchHistory = async () => {
                 ))
             )}
         </div>
-    )
+    );
 };
+
 export default History;

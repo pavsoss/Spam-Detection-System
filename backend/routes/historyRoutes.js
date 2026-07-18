@@ -44,3 +44,25 @@ router.get('/recent',protect, async(req,res)=> {
     res.status(500).json({ error: 'Failed to fetch recent activity' });
   }
     });
+
+router.get('/',protect,async(req,res) => {
+  try{
+    const{startDate, endDate, limit =50 } =req.query;
+
+    const filter = { userId: req.user.id};
+
+    if(startDate){
+      filter.createdAt = { ...filter.createdAt, $gte: new Date(startDate) };
+    }
+    if(endDate){
+      filter.createdAt = { ...filter.createdAt, $lte: new Date(endDate + 'T23:59:59') };
+    }
+    const predictions = await Prediction.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit));
+    
+    res.json(predictions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
