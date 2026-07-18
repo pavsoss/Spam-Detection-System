@@ -837,10 +837,6 @@ SPAM_WORDS = {
     'billion': 6, 'rich': 6, 'secret': 6, 'miracle': 5, 'amazing': 5
 }
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    data = request.json
-    text = data.get('text', '')
 
 @app.route('/api/wordcloud', methods=['GET'])
 @validate_request
