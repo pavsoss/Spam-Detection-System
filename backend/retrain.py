@@ -28,7 +28,6 @@ Run this from the backend/ directory:
 import argparse
 import os
 import pickle
-import os
 from collections import Counter
 import pandas as pd
 from utils.text_normalizer import normalizer
@@ -39,6 +38,7 @@ from datetime import datetime
 
 import pandas as pd
 import joblib
+import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 from sklearn.preprocessing import LabelEncoder
