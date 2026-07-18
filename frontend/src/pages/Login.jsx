@@ -39,7 +39,7 @@ const Login = () => {
 
     try {
       const res = await api.post(
-        `${import.meta.env.VITE_API_URI}/api/v1/auth/login`,
+        "/api/v1/auth/login",
         {
           email,
           password,
@@ -68,7 +68,7 @@ const Login = () => {
 
     try {
       const res = await api.post(
-        `${import.meta.env.VITE_API_URI}/api/v1/auth/google`,
+        "/api/v1/auth/google",
         {
           idToken: credentialResponse.credential,
         },
@@ -94,7 +94,7 @@ const Login = () => {
       <div className={`w-full max-w-md backdrop-blur-xl border border-white/20 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] p-8 sm:p-10 transition-all duration-300 ${isDark ? activeTheme.cardDark : activeTheme.card}`}>
         <h1 className="flex items-center justify-center gap-3 text-3xl font-extrabold mb-2">
           <img src={SpamLogo} alt="Spam Logo" className="w-24 h-16 object-contain" />
-          <span>Detector</span>
+          <span>Spam Detector</span>
         </h1>
         <p className="text-center opacity-70 mb-8 text-sm font-semibold">Sign in to your account</p>
 

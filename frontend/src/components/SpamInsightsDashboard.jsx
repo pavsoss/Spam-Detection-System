@@ -18,8 +18,8 @@ export default function SpamInsightsDashboard() {
     setError("");
     try {
       const url = cat
-        ? `${import.meta.env.VITE_API_URI || ""}/spam-insights?category=${cat}`
-        : `${import.meta.env.VITE_API_URI || ""}/spam-insights`;
+        ? `/spam-insights?category=${cat}`
+        : "/spam-insights";
       const res = await api.get(url);
       setInsights(res.data);
     } catch (err) {
@@ -222,6 +222,8 @@ export default function SpamInsightsDashboard() {
           </div>
         </div>
       )}
+
+      <FeedbackInsights />
     </div>
   );
 }

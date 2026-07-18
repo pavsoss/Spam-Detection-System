@@ -12,9 +12,11 @@ const { classifyMlApiError } = require('../utils/errorHelper');
 const validationMessages = require('../utils/validationMessages');
 const History = require('../models/History');
 const Rule = require('../models/Rule');
-const User = require('../models/User');
 const { matchKeywordRule } = require('../utils/keywordRules');
+const { evaluateAdminRules } = require('../utils/adminRuleEvaluator');
 const upload = multer();
+const { mlCircuitBreaker } = require('../utils/circuitBreaker');
+const { getFallbackPrediction } = require('../utils/fallbackDetector');
 
 // Helper to dispatch webhook
 const dispatchWebhook = require('../utils/dispatchWebhook'); // Aapko dispatchWebhook ko bhi alag file mein nikalna padega
@@ -192,11 +194,49 @@ router.post("/predict", predictLimiter, preventCacheStampede, protect, checkCach
        return res.json(kwResult);
      }
  
+     // ---> NEW: Check Admin Override Rules
+     const adminOverride = evaluateAdminRules(text);
+     if (adminOverride && adminOverride.matched) {
+       const isSpam = ["spam", "malicious", "smishing"].includes(adminOverride.action);
+       
+       // Save history for admin rule match
+       try {
+         await History.create({
+           user: req.user.id,
+           query: text,
+           prediction: adminOverride.action,
+           type: type,
+           confidence: 1.0,
+         });
+       } catch (historyError) {
+         console.error("Failed to save history for admin rule match:", historyError.message);
+       }
+       
+       console.log(`Admin override matched:`, adminOverride.description);
+       
+       return res.json({
+         input: text,
+         prediction: adminOverride.action,
+         result: adminOverride.action,
+         confidence: 1.0,
+         confidence_score: 100.0,
+         decision_score: null,
+         confidence_level: "high",
+         level_color: isSpam ? "red" : "green",
+         level_emoji: isSpam ? "🔴" : "🟢",
+         rule_applied: "admin_override",
+         explanation: `Matched admin override rule: ${adminOverride.description}`,
+         meta: {
+           source: adminOverride.source,
+           ruleId: adminOverride.ruleId
+         }
+       });
+     }
+
      console.log("Calling Flask...");
  
      // Check ML Cache globally before calling Flask
      const cacheKey = `spam_cache:${require('crypto').createHash('sha256').update(text).digest('hex')}`;
-     const { redisClient } = require("./middleware/cacheMiddleware");
      if (redisClient && redisClient.status === 'ready') {
        try {
          const cachedResult = await redisClient.get(cacheKey);
@@ -217,7 +257,8 @@ router.post("/predict", predictLimiter, preventCacheStampede, protect, checkCach
      apiUrl = apiUrl.replace(/\/predict\/?$/, "").replace(/\/$/, "") + "/predict";
  
      console.time("ML_API_CALL");
-     const response = await axios.post(
+     
+     const requestFn = () => axios.post(
        apiUrl,
        {
          text: text.trim(),
@@ -232,6 +273,14 @@ router.post("/predict", predictLimiter, preventCacheStampede, protect, checkCach
          timeout: Number(process.env.ML_API_TIMEOUT_MS) || 15000
        }
      );
+
+     const fallbackFn = (error) => {
+       console.warn(`[${req.requestId}] Circuit breaker fallback triggered. Error: ${error.message}`);
+       return { data: getFallbackPrediction(text, type) };
+     };
+
+     const response = await mlCircuitBreaker.fire(requestFn, fallbackFn);
+     
      console.timeEnd("ML_API_CALL");
      console.log("Flask responded:", response.data);
  
@@ -328,6 +377,25 @@ router.post("/feedback", protect, async (req, res) => {
       return res.status(error.response.status).json(error.response.data);
     }
     console.error(`[${req.requestId}] Feedback error:`, error.message);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+router.get("/feedback/stats", protect, async (req, res) => {
+  try {
+    const response = await axios.get(`${ML_API_BASE}/feedback/stats`);
+    res.json(response.data);
+  } catch (error) {
+    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+      console.error("Flask ML API is unavailable:", error.message);
+      return res.status(503).json({
+        error: "Flask ML API is currently unavailable. Please try again later.",
+      });
+    }
+    if (error.response) {
+      return res.status(error.response.status).json(error.response.data);
+    }
+    console.error(`[${req.requestId}] Feedback stats error:`, error.message);
     res.status(500).json({ error: "Something went wrong" });
   }
 });
@@ -622,5 +690,41 @@ router.get("/importance", async (req, res) => {
       res.status(500).json({ error: "Something went wrong" });
     }
 });
+
+router.get('/stats', protect, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get all predictions for user
+    const predictions = await Prediction.find({ userId });
+    
+    // Calculate stats
+    const total = predictions.length;
+    const todayCount = predictions.filter(p => 
+      new Date(p.createdAt) >= today
+    ).length;
+    
+    // Spam vs Ham breakdown
+    const spamCount = predictions.filter(p => 
+      p.result === 'spam' || p.result === 'smishing'
+    ).length;
+    const hamCount = predictions.filter(p => 
+      p.result === 'ham' || p.result === 'safe'
+    ).length;
+
+    res.json({
+      today: todayCount,
+      total: total,
+      spamCount: spamCount,
+      hamCount: hamCount
+    });
+  } catch (error) {
+    console.error('Stats error:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
 
 module.exports = router;
