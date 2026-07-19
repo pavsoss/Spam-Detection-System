@@ -189,10 +189,6 @@ def calculate_risk_score(age_days: Optional[int], blacklist_results: Dict[str, b
             score += 20  # Moderately new - low risk
         else:
             score += 5   # Old - minimal risk
-            
-        # Add 30 points if domain age is < 30 days as per new requirement
-        if age_days < 30:
-            score += 30
     else:
         score += 10  # Unknown - assume slightly suspicious
     
