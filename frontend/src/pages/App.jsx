@@ -14,6 +14,7 @@ import WordCloud from "../components/WordCloud";
 import ManipulationIndex from './ManipulationIndex';
 import FeedbackWidget from "../components/FeedbackWidget";
 import Login from "./Login.jsx";
+import { OnboardingTour } from './components/OnboardingTour';
 import DeSpamify from '../components/DeSpamify';
 import confetti from 'canvas-confetti';
 import Register from "./Register.jsx";
@@ -1164,6 +1165,10 @@ const analyzeEmojiSentiment = (text) => {
                     )}
                   </div>
                 )}
+                
+                <div className="App">
+                  <OnboardingTour />
+                </div>
 
                 <div className="mt-6 p-4 rounded-xl border text-left">
                   <div className="flex items-center justify-between mb-2">
