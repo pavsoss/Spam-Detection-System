@@ -1043,8 +1043,6 @@ def get_insights():
 # EMAIL PROVIDER ROUTES
 # ============================================
 
-TOKEN_STORE = {}
-
 
 @app.route("/gmail/auth-url", methods=["GET"])
 @validate_request
@@ -1078,10 +1076,7 @@ def gmail_emails():
     if not username:
         return jsonify({"error": "Missing X-User-Username header"}), 401
 
-    user_tokens = TOKEN_STORE.get(username, {}).get("gmail")
-
     user_tokens = oauth_store.get_oauth_tokens(username, "gmail")
-    
 
     if not user_tokens:
         return jsonify({"error": "Gmail account not connected"}), 401
