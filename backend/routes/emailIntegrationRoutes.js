@@ -2,6 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
+const headerAnalyzer = require('../services/headerAnalyzer');
+
 const {
   gmailAuthUrl,
   gmailCallback,
@@ -14,26 +16,22 @@ const {
   scanEmails
 } = require('../controllers/emailController');
 
-
-router.post('/email-breakdown', protect, async (req, res) => {
+router.post('/analyze-headers', protect, async (req, res) => {
   try {
-    const { email } = req.body;
+    const { headers } = req.body;
     
-    // Sample breakdown (replace with actual analysis)
-    const breakdown = {
-      spf: { score: 85, status: 'pass', details: 'SPF record validated' },
-      dkim: { score: 78, status: 'pass', details: 'DKIM signature verified' },
-      dmarc: { score: 70, status: 'warning', details: 'DMARC policy aligned' },
-      content: { score: 45, status: 'warning', details: 'Contains promotional words' },
-      overall: 70
-    };
-    
-    res.json(breakdown);
+    if (!headers) {
+      return res.status(400).json({ error: 'Headers required' });
+    }
+
+    const parsedHeaders = headerAnalyzer.parseHeaders(headers);
+    const result = headerAnalyzer.analyzeHeaders(parsedHeaders);
+
+    res.json(result);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to analyze email' });
+    res.status(500).json({ error: 'Failed to analyze headers' });
   }
 });
-
 // ==================== GMAIL ROUTES ====================
 router.get("/gmail/auth-url", protect, gmailAuthUrl);
 router.get("/gmail/callback", gmailCallback);
