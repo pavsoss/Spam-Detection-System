@@ -3,3 +3,77 @@
 .text-green-500 { color: #22c55e; }
 .text-yellow-500 { color: #eab308; }
 .text-red-500 { color: #ef4444; }
+
+/* Back to Top Button */
+.back-to-top {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: #6c63ff;
+  color: white;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(108, 99, 255, 0.3);
+  z-index: 999;
+  transition: all 0.3s ease;
+}
+
+.back-to-top:hover {
+  background: #5a52d6;
+  transform: translateY(-3px);
+}
+
+@media (max-width: 640px) {
+  .back-to-top {
+    bottom: 20px;
+    right: 20px;
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+  }
+}
+
+/* ========================================
+   CLEAR BUTTON (Issue #948)
+   ======================================== */
+
+.clear-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.clear-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  transform: scale(1.1);
+}
+
+.clear-btn:active {
+  transform: scale(0.9);
+}
+
+.dark .clear-btn {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.dark .clear-btn:hover {
+  background: rgba(239, 68, 68, 0.35);
+}

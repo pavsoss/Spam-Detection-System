@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
+import { useEffect } from 'react';
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
@@ -10,7 +11,7 @@ import FeatureImportance from "../components/FeatureImportance";
 import PredictionExplanation from "../components/PredictionExplanation";
 import History from "../components/History";
 import WordCloud from "../components/WordCloud";
-import ManipulationIndex from '../components/ManipulationIndex';
+import ManipulationIndex from './ManipulationIndex';
 import FeedbackWidget from "../components/FeedbackWidget";
 import Login from "./Login.jsx";
 import { OnboardingTour } from './components/OnboardingTour';
@@ -21,6 +22,7 @@ import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import EmailHeaderAnalyzer from "../components/EmailHeaderAnalyzer";
 import BulkSpamDetection from "../components/BulkSpamDetection";
+import { ResultBadge } from '../components/ResultBadge';
 import SpamInsightsDashboard from "../components/SpamInsightsDashboard";
 import EmailScannerDashboard from "../components/EmailScannerDashboard";
 import Chatbot from "../components/Chatbot";
@@ -29,13 +31,18 @@ import SpamPatternLibrary from '../components/SpamPatternLibrary';
 import URLPreview from '../components/URLPreview';
 import InstallAppButton from "../components/InstallAppButton";
 import RulesManager from "../components/RulesManager";
+import AdminRulesManager from "../components/AdminRulesManager";
+import AdminFeedbackView from "../components/AdminFeedbackView";
 
 function App() {
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [result, setResult] = useState("");
+  const [historyId, setHistoryId] = useState(null);
   const [confidence, setConfidence] = useState(null);
+  const [severity, setSeverity] = useState(null);
   const [explanation, setExplanation] = useState(null);
+  const [urlRisk, setUrlRisk] = useState(null);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState("message");
   const [errorInfo, setErrorInfo] = useState(null);
@@ -45,15 +52,21 @@ function App() {
   const [lastCall, setLastCall] = useState(0);
   const [rateLimitError, setRateLimitError] = useState('');
   const [copied, setCopied] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const [hasCelebrated, setHasCelebrated] = useState(() => {
     return localStorage.getItem("firstPrediction") === "true";
   });
+  // eslint-disable-next-line no-unused-vars
   const [showCelebration, setShowCelebration] = useState(false);
 
+  // eslint-disable-next-line no-unused-vars
   const [darkMode, setDarkMode] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [showHistory, setShowHistory] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [theme, setTheme] = useState("ocean");
+  // eslint-disable-next-line no-unused-vars
   const [showThemes, setShowThemes] = useState(false);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -68,6 +81,7 @@ function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Detect URLs in text
+  // eslint-disable-next-line no-unused-vars
   const detectURLs = (text) => {
     if (!text) return [];
     const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -91,24 +105,28 @@ function App() {
         osc.start(ctx.currentTime + delay);
         osc.stop(ctx.currentTime + delay + 0.15);
       });
+  // eslint-disable-next-line no-unused-vars
     } catch (e) {
       /* silent fail */
     }
   };
 
   // Helper to get earned badges (returns array of badge objects)
+  // eslint-disable-next-line no-unused-vars
   const getEarnedBadges = () => {
     try {
       const streakCount = parseInt(localStorage.getItem('predictionStreak') || '0', 10);
       return Object.keys(Badges)
         .map((k) => ({ day: Number(k), ...Badges[k] }))
         .filter((b) => streakCount >= b.day);
+  // eslint-disable-next-line no-unused-vars
     } catch (e) {
       return [];
     }
   };
 
   // Placeholder for badge checking logic
+  // eslint-disable-next-line no-unused-vars
   const checkNewBadge = (newStreak) => {
     // simple implementation: if new streak matches a badge threshold, show popup
     if (Badges[newStreak]) {
@@ -119,6 +137,7 @@ function App() {
   };
 
   //Streak tracking
+  // eslint-disable-next-line no-unused-vars
   const [streak, setStreak] = useState(() => {
     const lastDate = localStorage.getItem("lastPredictionDate");
     const streakCount = parseInt(localStorage.getItem("streakCount") || "0", 10);
@@ -137,7 +156,9 @@ function App() {
     return streakCount;
   });
 
+  // eslint-disable-next-line no-unused-vars
   const [newBadgeEarned, setNewBadgeEarned] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [showBadgePopup, setShowBadgePopup] = useState(false);
 
   //Badge Definitions
@@ -166,6 +187,7 @@ function App() {
         osc.start(ctx.currentTime + i * 0.12);
         osc.stop(ctx.currentTime + i * 0.12 + 0.15);
       });
+  // eslint-disable-next-line no-unused-vars
     } catch (e) { /* silent fail */ }
   };
 
@@ -271,7 +293,7 @@ function App() {
 const analyzeEmojiSentiment = (text) => {
   if (!text) return { positive: 0, negative: 0, neutral: 0 };
 
-  const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/g;
+  const emojiRegex = /([\u2700-\u27BF]|[\uE000-\uF8FF]|[\uD83C-\uDBFF\uDC00-\uDFFF])/gu;
   const matches = text.match(emojiRegex) || [];
 
   if (matches.length === 0) return { positive: 0, negative: 0, neutral: 0 };
@@ -343,7 +365,7 @@ const analyzeEmojiSentiment = (text) => {
     if (loading) return;
       try {
       setLoading(true);
-      const res = await api.post(`${import.meta.env.VITE_API_URI}/predict`, {
+      const res = await api.post('/predict', {
         text: text,
         type: type,
       });
@@ -353,8 +375,11 @@ const analyzeEmojiSentiment = (text) => {
         localStorage.setItem('firstPrediction', 'true');
       }
       setResult(res.data.prediction);
+      setHistoryId(res.data.historyId || null);
       setConfidence(res.data.confidence ?? null);
+      setSeverity(res.data.severity || null);
       setExplanation(res.data.explanation || null);
+      setUrlRisk(res.data.url_risk || null);
       setErrorInfo(null);
     } catch (error) {
       console.error('API Error:', error);
@@ -396,18 +421,72 @@ const analyzeEmojiSentiment = (text) => {
   });
   } finally {
       setLoading(false);
+    }
+  };
 
-      const today = new Date().toDateString();
-      const lastDate = localStorage.getItem('lastPredictionDate');
-      const currentStreak = parseInt(localStorage.getItem('predictionStreak') || '0');
+  // ============================================
+  // ✅ HANDLE CLEAR BUTTON (Issue #948)
+  // ============================================
+  const handleClear = () => {
+    // Clear text input
+    setText("");
+    
+    // Clear all results
+    setResult("");
+    setHistoryId(null);
+    setConfidence(null);
+    setSeverity(null);
+    setExplanation(null);
+    setUrlRisk(null);
+    setErrorInfo(null);
+    setRateLimitError('');
+    setCopied(false);
+    setType("message");
+    setShowDeSpamify(false);
+    
+    // Clear DeSpamify text if shown
+    if (document.querySelector('.de-spamify-result')) {
+      const deSpamifyText = document.querySelector('.de-spamify-result');
+      if (deSpamifyText) deSpamifyText.textContent = '';
+    }
+  };
 
-      if (lastDate !== today) {
-      const newStreak = currentStreak + 1;
-      localStorage.setItem('predictionStreak', newStreak.toString());
-      localStorage.setItem('lastPredictionDate', today);
-      setStreak(newStreak);
-      checkNewBadge(newStreak);
+  // ============================================
+  // ✅ HANDLE ENTER KEY (Issue #946)
+  // ============================================
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!loading && text.trim().length > 0 && text.length <= 5000) {
+        handlePredict();
       }
+    }
+  };
+
+  // eslint-disable-next-line no-unused-vars
+  const [showButton, setShowButton] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowButton(window.scrollY > 300);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // eslint-disable-next-line no-unused-vars
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  // eslint-disable-next-line no-unused-vars
+  const getColor = () => {
+    if (result === "ham" || result === "safe")
+      return "text-green-600 dark:text-green-400";
+    if (result === "spam" || result === "malicious")
+      return "text-red-600 dark:text-red-400";
+    if (result === "smishing") return "text-orange-600 dark:text-orange-400";
+    if (result === "Error") {
+      return isDark ? "text-yellow-300" : "text-yellow-700";
     }
   };
 
@@ -433,6 +512,11 @@ const analyzeEmojiSentiment = (text) => {
   const confidencePct = confidence !== null ? Math.min(confidence * 50 + 50, 100).toFixed(1) : "0.0";
   const confidenceValue = Number(confidencePct);
   const riskLevel = confidenceValue >= 80 ? "High" : confidenceValue >= 50 ? "Medium" : "Low";
+  const severityTone = severity?.level === "Critical" ? "text-red-600 dark:text-red-400" : severity?.level === "High" ? "text-orange-600 dark:text-orange-400" : severity?.level === "Moderate" ? "text-yellow-700 dark:text-yellow-400" : "text-green-700 dark:text-green-400";
+  const emojiAnalysis = useMemo(() => analyzeEmojiSentiment(text), [text]);
+
+  // Check if clear button should be shown
+  const showClearButton = text.length > 0 || result !== "" || errorInfo !== null || rateLimitError !== "";
 
   return (
     <div className={`min-h-screen flex flex-col items-center px-4 py-8 pb-32 transition-all duration-500 ${isDark ? activeTheme.dark : activeTheme.light}`}>
@@ -451,7 +535,6 @@ const analyzeEmojiSentiment = (text) => {
         >
           {isDark ? '☀️' : '🌙'}
         </button>
-        <InstallAppButton />
         <button
           onClick={() => setShowSettings(!showSettings)}
           className={`px-4 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center gap-2 shadow-md ${isDark ? "bg-slate-800 text-white hover:bg-slate-700" : "bg-white/35 text-slate-850 hover:bg-white/50"}`}
@@ -496,7 +579,7 @@ const analyzeEmojiSentiment = (text) => {
             formData.append('avatar', file);
             try {
               const token = localStorage.getItem('token');
-              const res = await api.post(`${import.meta.env.VITE_API_URI || ''}/api/v1/auth/avatar`, formData, {
+              const res = await api.post('/api/v1/auth/avatar', formData, {
                 headers: {
                   'Content-Type': 'multipart/form-data',
                   Authorization: `Bearer ${token}`
@@ -629,6 +712,22 @@ const analyzeEmojiSentiment = (text) => {
               </button>
                 Rules Manager
               </button>
+              {user?.role === 'admin' && (
+                <>
+                  <button
+                    onClick={() => setActiveTab("admin-rules")}
+                    className={`pb-1 px-4 transition-all border-b-2 ${activeTab === "admin-rules" ? "border-current opacity-100 text-purple-500" : "border-transparent opacity-50 hover:opacity-75"}`}
+                  >
+                    Admin Rules
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("admin-feedback")}
+                    className={`pb-1 px-4 transition-all border-b-2 ${activeTab === "admin-feedback" ? "border-current opacity-100 text-purple-500" : "border-transparent opacity-50 hover:opacity-75"}`}
+                  >
+                    Admin Feedback
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => setActiveTab("history")}
                 className={`pb-1 px-4 transition-all border-b-2 ${activeTab === "history" ? "border-current opacity-100" : "border-transparent opacity-50 hover:opacity-75"}`}
@@ -670,17 +769,49 @@ const analyzeEmojiSentiment = (text) => {
                       const detected = detectType(value);
                       setType(detected);
                     }}
+                    onKeyDown={(e) => {
+                      // ✅ Plain Enter key support (Issue #946)
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (!loading && text.trim().length > 0 && text.length <= 5000) {
+                          handlePredict();
+                        }
+                      }
+                      // Support Ctrl+Enter (Windows/Linux) and Cmd+Enter (macOS)
+                      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        if (!loading && text.trim().length > 0 && text.length <= 5000) {
+                          handlePredict();
+                        }
+                      }
+                    }}
                   />
 
-                  {text && (
+                  {/* ✅ CLEAR BUTTON (Issue #948) */}
+                  {showClearButton && (
                     <button
-                      onClick={() => setText("")}
-                      className={`absolute top-3.5 right-3.5 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all hover:scale-110 shadow-sm ${isDark ? "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white" : "bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-slate-800"}`}
-                      title="Clear input"
+                      onClick={handleClear}
+                      className={`absolute top-3.5 right-3.5 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition-all hover:scale-110 shadow-sm z-10 ${
+                        isDark 
+                          ? 'bg-red-900/40 text-red-400 hover:bg-red-800/60 hover:text-red-300 border border-red-700/30' 
+                          : 'bg-red-100 text-red-600 hover:bg-red-200 hover:text-red-700 border border-red-200'
+                      }`}
+                      title="Clear all (text, results, errors)"
                     >
                       ✕
                     </button>
                   )}
+
+                  {/* Keyboard Shortcut Hint */}
+                  {text && (
+                    <div className="absolute bottom-2 right-14 text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                      <kbd className="px-1 py-0.5 rounded bg-white dark:bg-slate-900 text-[9px] font-mono border border-slate-300 dark:border-slate-600">Enter</kbd>
+                      <span>or</span>
+                      <kbd className="px-1 py-0.5 rounded bg-white dark:bg-slate-900 text-[9px] font-mono border border-slate-300 dark:border-slate-600">⌘+Enter</kbd>
+                      <span>to submit</span>
+                    </div>
+                  )}
+
                   {text && (
                     <div className="flex flex-wrap justify-between items-center mt-1.5 px-1 text-xs font-medium tracking-wide opacity-70 gap-1">
                       <div className="flex flex-wrap gap-3">
@@ -786,7 +917,7 @@ const analyzeEmojiSentiment = (text) => {
                       </span>
                     </div>
                      
-                    <URLPreview url={text} darkMode={isDark}>
+                    <URLPreview url={text} darkMode={isDark} urlRisk={urlRisk}>
                       <span className="text-blue-500 underline cursor-pointer">
                        {text}
                       </span>
@@ -820,6 +951,46 @@ const analyzeEmojiSentiment = (text) => {
                       </>
                     )}
 
+                    {severity && result !== "Error" && (
+                      <div className={`mt-4 rounded-2xl border p-4 text-left ${isDark ? "border-slate-700 bg-slate-800/60" : "border-slate-200 bg-slate-50"}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide opacity-70">Severity</p>
+                            <p className={`text-xl font-bold ${severityTone}`}>{severity.level}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs font-semibold uppercase tracking-wide opacity-70">Score</p>
+                            <p className={`text-2xl font-black ${severityTone}`}>{severity.score.toFixed(1)}/10</p>
+                          </div>
+                        </div>
+                        {severity.indicators?.length > 0 && (
+                          <div className="mt-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">Threat Indicators</p>
+                            <div className="flex flex-wrap gap-2">
+                              {severity.indicators.map((indicator) => (
+                                <span key={indicator} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isDark ? "bg-slate-700 text-slate-100" : "bg-white text-slate-700 border border-slate-200"}`}>
+                                  {indicator}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {severity.breakdown && (
+                          <div className="mt-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">Breakdown</p>
+                            <div className="grid gap-2 text-sm">
+                              {Object.entries(severity.breakdown).filter(([key]) => key !== "total_score").map(([key, value]) => (
+                                <div key={key} className="flex items-center justify-between rounded-lg bg-black/5 dark:bg-white/5 px-2.5 py-1.5">
+                                  <span className="capitalize">{key.replace(/_/g, " ")}</span>
+                                  <span className="font-semibold">{Number(value).toFixed(1)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {result && confidence !== null && result !== "Error" && (
                       <div className="mt-4 text-left">
                         <p className="text-xs font-semibold mb-1 opacity-70">Model Confidence: {confidencePct}%</p>
@@ -849,27 +1020,27 @@ const analyzeEmojiSentiment = (text) => {
                     ))}
 
                     {/* Emoji Sentiment Analysis */}
-                    {result && result !== "Error" && text && analyzeEmojis(text).count > 0 && (
+                    {result && result !== "Error" && text && emojiAnalysis.count > 0 && (
                      <div className="mt-4 pt-3 border-t border-slate-700/20">
                       <p className="text-xs font-semibold opacity-70 mb-2 flex items-center gap-1">
                          <span>😊</span> Emoji Sentiment
                       </p>
                      <div className="flex flex-wrap items-center gap-3">
                         <span className="text-lg">
-                        {analyzeEmojis(text).emojis.join(' ')}
+                        {emojiAnalysis.emojis.join(' ')}
                          </span>
                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                         analyzeEmojis(text).sentiment === 'positive' 
-                         ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
-                         : analyzeEmojis(text).sentiment === 'negative'
+                         emojiAnalysis.sentiment === 'positive'
+                         ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                         : emojiAnalysis.sentiment === 'negative'
                          ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                          : 'bg-gray-100 text-gray-700 dark:bg-gray-800/30 dark:text-gray-400'
                         }`}>
-                        {analyzeEmojis(text).sentiment === 'positive' && '😊 Positive'}
-                        {analyzeEmojis(text).sentiment === 'negative' && '😢 Negative'}
-                        {analyzeEmojis(text).sentiment === 'neutral' && '😐 Neutral'}
+                        {emojiAnalysis.sentiment === 'positive' && '😊 Positive'}
+                        {emojiAnalysis.sentiment === 'negative' && '😢 Negative'}
+                        {emojiAnalysis.sentiment === 'neutral' && '😐 Neutral'}
                         </span>
-                        {analyzeEmojis(text).spamDetected && (
+                        {emojiAnalysis.spamDetected && (
                          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500 text-white">
                           ⚠️ Spam Emojis
                          </span>
@@ -916,15 +1087,17 @@ const analyzeEmojiSentiment = (text) => {
                     )}
 
                     {result && result !== "Error" && type !== "url" && (
-                      <FeedbackWidget key={`${text}|${result}|${confidence}`} text={text} predictedLabel={result} darkMode={isDark} />
+                      <FeedbackWidget key={`${text}|${result}|${confidence}`} text={text} predictedLabel={result} darkMode={isDark} historyId={historyId} />
                     )}
 
                     <button
                       onClick={() => {
                       setText("");
                       setResult("");
+                      setHistoryId(null);
                       setConfidence(null);
                       setExplanation(null);
+                      setUrlRisk(null);
                       setErrorInfo(null);
                       setCopied(false);
                       setType("message");
@@ -1068,7 +1241,34 @@ const analyzeEmojiSentiment = (text) => {
               </div>
             )}
           </div>
+        )}
+      </>
+    )}
+  </div>
+)}
+
+              <FeatureImportance darkMode={isDark} />
+            </>
+          ) : activeTab === "bulk" ? (
+            <BulkSpamDetection />
+          ) : activeTab === "insights" ? (
+            <SpamInsightsDashboard />
+          ) : activeTab === "scanner" ? (
+            <EmailScannerDashboard />
+          ) : activeTab === "rules" ? (
+            <RulesManager />
+          ) : activeTab === "admin-rules" ? (
+            <AdminRulesManager />
+          ) : activeTab === "admin-feedback" ? (
+            <AdminFeedbackView />
+          ) : activeTab === "history" ? (
+            <History />
+          ) : (
+            <EmailHeaderAnalyzer />
+          )}
+          <WordCloud darkMode={isDark} />
         </div>
+      </div>
       </div>
       <Footer darkMode={isDark} />
       <Chatbot />
