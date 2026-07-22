@@ -30,9 +30,7 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from routes.analytics import analytics_bp
 from routes.analytics import record_scan
-from flask_limiter import Limiter
-from flask_limiter.errors import RateLimitExceeded
-from flask_limiter.util import get_remote_address
+from rate_limiting import RateLimitPolicy, configure_rate_limiting, rate_limit
 from gmail_connector import get_gmail_auth_url, get_gmail_tokens, refresh_gmail_token, fetch_gmail_emails
 from outlook_connector import get_outlook_auth_url, get_outlook_tokens, refresh_outlook_token, fetch_outlook_emails
 from email_scanner import scan_emails_with_model
@@ -70,17 +68,11 @@ app = Flask(__name__)
 xai_engine = ExplanationEngine()
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
-# ── Rate limiting (ML inference protection) ──────────────────────────────────
-PREDICT_RATE_LIMIT = os.getenv("PREDICT_RATE_LIMIT", "50 per minute")
-
-from extensions import limiter
-app.config["RATELIMIT_DEFAULT"] = PREDICT_RATE_LIMIT
-limiter.init_app(app)
-
-# Flask-Limiter uses a default 429 HTML response; standardize to JSON.
-@app.errorhandler(RateLimitExceeded)
-def ratelimit_handler(e):
-    return jsonify({"error": "Too Many Requests", "rate_limit": PREDICT_RATE_LIMIT}), 429
+# ── Rate limiting for expensive endpoints (issue #939) ───────────────────
+# Reusable, distributed (Redis with in-memory fallback) throttling. Endpoints
+# opt into named policies with the @rate_limit decorator; the shared limiter and
+# JSON 429 handler are configured here. See rate_limiting.py.
+configure_rate_limiting(app)
 
 
 # ============================================
@@ -613,7 +605,7 @@ def make_prediction_response(
 @validate_request
 @validate_internal_request
 @ip_allowlist
-@limiter.limit(PREDICT_RATE_LIMIT)
+@rate_limit(RateLimitPolicy.PREDICT)
 def predict():
 
     # Initialize final_output to prevent NameError/UnboundLocalError in case of early/conditional references
