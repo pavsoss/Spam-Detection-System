@@ -19,6 +19,8 @@ pytest
 shap
 lime
 flask-cors
+scikit-learn>=1.2.0
+numpy>=1.23.0
 requests>=2.31.0
 cryptography>=42.0.0
 APScheduler>=3.10.4
