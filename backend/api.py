@@ -308,6 +308,44 @@ from xai_service import XAIService
 xai_service = XAIService(model=model, vectorizer=vectorizer, label_encoder=label_encoder)
 
 
+# ============================================
+# HOT-RELOADABLE SERVING STATE
+# ============================================
+
+# The objects above are what request handlers actually serve. Install them in a
+# shared, thread-safe holder so POST /reload-model can atomically hot-swap in a
+# freshly retrained model without a restart (issue #973); handlers read from
+# serving_state.STATE rather than these module globals so the swap is visible.
+import serving_state
+
+
+def _load_serving_objects():
+    """Reload the serving object set from disk (used by /reload-model)."""
+    fresh_model = joblib.load(MODEL_PATH)
+    fresh_vectorizer = joblib.load(VECTORIZER_PATH)
+    fresh_label_encoder = joblib.load(LABEL_ENCODER_PATH)
+    fresh_xai_service = XAIService(
+        model=fresh_model,
+        vectorizer=fresh_vectorizer,
+        label_encoder=fresh_label_encoder,
+    )
+    return {
+        "model": fresh_model,
+        "vectorizer": fresh_vectorizer,
+        "label_encoder": fresh_label_encoder,
+        "xai_service": fresh_xai_service,
+    }
+
+
+serving_state.init_state(
+    model=model,
+    vectorizer=vectorizer,
+    label_encoder=label_encoder,
+    xai_service=xai_service,
+    loader=_load_serving_objects,
+)
+
+
 
 # SQLite Persistent Storage for spam words
 import sqlite3
@@ -454,6 +492,9 @@ app.label_encoder = label_encoder  # type: ignore[attr-defined]
 from bulk_predict import bulk_predict_bp
 app.register_blueprint(bulk_predict_bp)
 app.register_blueprint(analytics_bp)
+
+from routes.reload import register_reload_endpoint
+register_reload_endpoint(app)
 
 url_model = joblib.load(URL_MODEL_PATH)
 url_vectorizer = joblib.load(URL_VECTORIZER_PATH)
@@ -648,9 +689,12 @@ def predict():
                 "error": f"'text' must be a string, got {type(text).__name__}"
             }), 400
 
+        # Read the live serving objects through the shared state so a
+        # /reload-model hot-swap is picked up here without a restart (#973).
+        serving = serving_state.STATE.snapshot()
         normalized_text = normalizer.normalize(text)
-        vectorized = vectorizer.transform([normalized_text])
-        prediction = model.predict(vectorized)[0]
+        vectorized = serving.vectorizer.transform([normalized_text])
+        prediction = serving.model.predict(vectorized)[0]
     
         return jsonify({
           'original_text': text,
@@ -868,7 +912,7 @@ def get_feature_importance():
     try:
         top_features = [
             {"feature": word, "importance": score}
-            for word, score in xai_service.get_global_importance()
+            for word, score in serving_state.STATE.snapshot().xai_service.get_global_importance()
         ]
         return jsonify({"top_features": top_features})
     except Exception as e:
