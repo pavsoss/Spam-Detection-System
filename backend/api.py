@@ -8,7 +8,6 @@ import pickle
 import re
 import hmac
 from collections import Counter
-from utils.text_normalizer import normalizer
 from urllib.parse import urlparse
 from functools import wraps
 from dotenv import load_dotenv
@@ -457,15 +456,10 @@ app.register_blueprint(analytics_bp)
 
 url_model = joblib.load(URL_MODEL_PATH)
 url_vectorizer = joblib.load(URL_VECTORIZER_PATH)
-URL_LABELS = {0: "malicious", 1: "safe"}
-# url_detector.pkl predicts numeric classes with no bundled label encoder
-URL_LABELS = {0: "safe", 1: "malicious"}
-
-
-
-URL_LABELS = {0: "malicious", 1: "safe"}
-
-# url_detector.pkl predicts numeric classes with no bundled label encoder
+# url_detector.pkl predicts numeric classes with no bundled label encoder. The
+# model was trained with benign -> Safe (0) and phishing/malware/defacement ->
+# Malicious (1) (see the "Url Model" dataset-labels table in the README), so 0
+# must map to "safe" and 1 to "malicious".
 URL_LABELS = {0: "safe", 1: "malicious"}
 
 
@@ -648,16 +642,6 @@ def predict():
                 "error": f"'text' must be a string, got {type(text).__name__}"
             }), 400
 
-        normalized_text = normalizer.normalize(text)
-        vectorized = vectorizer.transform([normalized_text])
-        prediction = model.predict(vectorized)[0]
-    
-        return jsonify({
-          'original_text': text,
-          'normalized_text': normalized_text,
-          'prediction': prediction
-        })
-
         # Maximum-length validation before any vectorization/inference work.
         if len(text) > MAX_MESSAGE_LENGTH:
             return jsonify({
@@ -700,7 +684,7 @@ def predict():
         else:
             text_vector = vectorizer.transform([text])
             prediction = model.predict(text_vector)
-            final_output = label_encoder.inverse_transform(prediction)[0]
+            final_output = str(label_encoder.inverse_transform(prediction)[0])
 
         confidence_score = 95.0
         decision_score = None
